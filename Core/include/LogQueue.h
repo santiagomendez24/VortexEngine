@@ -7,25 +7,48 @@
 #include <mutex>
 #include <condition_variable>
 #include <string>
+#include <new>
+#include <cstdint>
 
 namespace Core
 {
+    enum class LogLevel
+    {
+        Info,
+        Warning,
+        Error,
+        Critical
+    };
+
+    struct LogEntry
+    {
+        uint64_t timestamp;     
+        LogLevel level;          
+        uint32_t component_id;   
+
+        std::string location; 
+        std::string message;  
+        std::string context;
+    };
 
     class LogQueue
     {
     private:
-        std::queue<std::string> raw_queue;
+
+        std::queue<LogEntry> raw_queue;
         std::mutex queue_mutex;
-        std::condition_variable cv;
+
+        alignas(std::hardware_destructive_interference_size) std::condition_variable cv;
         bool is_running = true;
 
     public:
+
         LogQueue() = default;
         LogQueue(const LogQueue&) = delete;
         LogQueue& operator=(const LogQueue&) = delete;
 
-        void push(std::string&& log_line);
-        bool pop(std::string& out_log);
+        void push(LogEntry&& log_line);
+        bool pop(LogEntry& out_log);
         void set_finished();
     };
 

@@ -4,7 +4,7 @@
 namespace Core
 {
 
-    void LogQueue::push(std::string&& log_line)
+    void LogQueue::push(LogEntry&& log_line)
     {
         {
             std::lock_guard<std::mutex> lock(queue_mutex);
@@ -22,7 +22,7 @@ namespace Core
         cv.notify_all();
     }
 
-    bool LogQueue::pop(std::string& out_log)
+    bool LogQueue::pop(LogEntry& out_log)
     {
         std::unique_lock<std::mutex> lock(queue_mutex);
         cv.wait(lock, [this] { return !raw_queue.empty() || !is_running; });
@@ -33,7 +33,7 @@ namespace Core
             raw_queue.pop();
             return true;
         }
-        return is_running;
+        return false;
     }
 
 } 
