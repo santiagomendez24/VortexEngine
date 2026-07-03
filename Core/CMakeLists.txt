@@ -1,6 +1,5 @@
-add_library(Network_Lib STATIC
-    src/LogServer.cpp
+add_library(Core_Lib STATIC
+    src/LogQueue.cpp
 )
 
-target_include_directories(Network_Lib PUBLIC include)
-target_link_libraries(Network_Lib PUBLIC Core_Lib asio::asio)
+target_include_directories(Core_Lib PUBLIC include)

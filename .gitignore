@@ -1,0 +1,8 @@
+build/
+.vs/
+out/
+CMakeSettings.json
+*.slnx
+*.vcxproj
+*.user
+*.filters

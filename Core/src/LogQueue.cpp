@@ -1,4 +1,4 @@
-#include "LogQueue.h"
+#include "../include/LogQueue.h"
 #include <utility>
 
 namespace Core

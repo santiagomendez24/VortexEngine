@@ -1,6 +1,9 @@
 #pragma once
 
-class LogServer
+namespace Network
 {
+	class LogServer
+	{
 
-};
+	};
+}

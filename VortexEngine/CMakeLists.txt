@@ -1,0 +1,3 @@
+add_executable(VortexEngine VortexEngine.cpp)
+
+target_link_libraries(VortexEngine PRIVATE Network_Lib)
