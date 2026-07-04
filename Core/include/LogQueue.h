@@ -26,9 +26,9 @@ namespace Core
         LogLevel level;          
         uint32_t component_id;   
 
-        std::string location; 
-        std::string message;  
-        std::string context;
+        std::array<char, 64> location; 
+        std::array<char, 256> message;
+        std::array<char, 128> context;
     };
 
     class LogQueue
