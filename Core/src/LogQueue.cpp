@@ -6,10 +6,12 @@ namespace Core
 
     void LogQueue::push(LogEntry&& log_line)
     {
-        {
-            std::lock_guard<std::mutex> lock(queue_mutex);
-            raw_queue.push(std::move(log_line));
-        }
+        if (!is_running) return;
+
+        std::unique_lock<std::mutex> lock(queue_mutex);
+        cv.wait(lock, [this] { return raw_queue.size() < MaxCapacity || !is_running });
+        raw_queue.push(std::move(log_line));
+
         cv.notify_one();
     }
 
