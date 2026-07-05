@@ -4,11 +4,11 @@ namespace Network
 {
 	LogServer::start_accept()
 	{
-		acceptor_.async_accept([this](asio::error_code ec, asio::ip::tcp::socket socket)
+		acceptor_.async_accept([this](const asio::error_code& ec, asio::ip::tcp::socket socket)
 		{
 			if (!ec)
 			{
-				std::make_shared<NetworkSession>(std::move(socket), log_queue_)->start();
+				std::make_shared<NetworkSession<SecurityCheck>>(std::move(socket), log_queue_)->start();
 			}
 			else
 			{
@@ -19,16 +19,43 @@ namespace Network
 		});
 	}
 
-	NetworkSession::read_body(uint32_t lenght)
+	NetworkSession::read_header()
 	{
-		auto self(shared_from_this());
-		read_buffer_.resize(lenght);
+		auto self = shared_from_this();
 
-		asio::async_read(socket_, asio::buffer(read_buffer_), [this, self](asio::error_code ec, std::size_t /*lenght*/)
+		asio::async_read(socket_, asio::buffer(&body_length_buffer_, sizeof(body_length_buffer_)), [this, self](const asio::error_code& ec, std::size_t /*length*/)
 		{
 			if (!ec)
 			{
-				std::string_view raw_data(read_buffer_.data(), read_buffer_.size());
+				uint32_t body_length = ntohl(body_length_buffer_);
+
+				const uint32_t MAX_LOG_SIZE = 1024 * 64;
+				if (body_length > MAX_LOG_SIZE)
+				{
+					handle_error(asio::error::message_size);
+					return;
+				}
+
+				auto data = asio::buffer(read_buffer_, body_length);
+				read_body(data.size());
+			}
+			else
+			{
+				handle_error(ec);
+			}
+		});
+	}
+
+	NetworkSession::read_body(uint32_t lenght)
+	{
+		auto self = shared_from_this();
+		auto data = asio::buffer(read_buffer_, lenght);
+		
+		asio::async_read(socket_, data, [this, self](const asio::error_code& ec, std::size_t lenght)
+		{
+			if (!ec)
+			{
+				std::string_view raw_data(read_buffer_.data(), lenght);
 				parse_and_push(raw_data);
 				read_header();
 			}
@@ -85,6 +112,13 @@ namespace Network
 				return;
 			}
 
+			if (!SecurityCheck::validate(log_entry))
+			{
+				return;
+			}
+
+			if (parts[3].empty() || parts[4].empty() || parts[5].empty()) return;
+
 			size_t location_size = std::min(parts[3].size(), log_entry.location.size() - 1);
 			std::copy_n(parts[3].data(), location_size, log_entry.location.begin());
 			log_entry.location[location_size] = '\0';
@@ -98,6 +132,10 @@ namespace Network
 			log_entry.context[context_size] = '\0';
 
 			log_queue_.push(std::move(log_entry));
+		}
+		else
+		{
+			handle_error(asio::error::invalid_argument);
 		}
 	}
 

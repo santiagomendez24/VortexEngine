@@ -6,21 +6,22 @@ namespace Core
 
     void LogQueue::push(LogEntry&& log_line)
     {
+        std::unique_lock<std::mutex> lock(queue_mutex);
         if (!is_running) return;
 
-        std::unique_lock<std::mutex> lock(queue_mutex);
-        cv.wait(lock, [this] { return raw_queue.size() < MaxCapacity || !is_running });
-        raw_queue.push(std::move(log_line));
+        cv.wait(lock, [this] { return raw_queue.size() < MaxCapacity || !is_running; });
 
+        if (!is_running) return;
+
+        raw_queue.push(std::move(log_line));
         cv.notify_one();
     }
 
     void LogQueue::set_finished()
     {
-        {
-            std::lock_guard<std::mutex> lock(queue_mutex);
-            is_running = false;
-        }
+        std::lock_guard<std::mutex> lock(queue_mutex);
+        is_running = false;
+
         cv.notify_all();
     }
 
@@ -29,13 +30,14 @@ namespace Core
         std::unique_lock<std::mutex> lock(queue_mutex);
         cv.wait(lock, [this] { return !raw_queue.empty() || !is_running; });
 
-        if (!raw_queue.empty())
+        if (raw_queue.empty() && !is_running)
         {
-            out_log = std::move(raw_queue.front());
-            raw_queue.pop();
-            return true;
+            return false;
         }
-        return false;
+
+        out_log = std::move(raw_queue.front());
+        raw_queue.pop();
+        return true;
     }
 
 } 

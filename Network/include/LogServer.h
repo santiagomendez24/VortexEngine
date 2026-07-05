@@ -4,11 +4,57 @@
 #include <memory>
 #include <vector>
 #include <thread>
+#include <chrono>
+#include <array>
 
 namespace Network
 {
+    struct CheckLogEntry
+    {
+        [[nodiscard]] static bool validate(const Core::LogEntry& log) noexcept
+        {
+            if (!validateTimestamp(log.timestamp))
+            {
+                return false;
+            }
 
-    class NetworkSession : public std::enable_shared_from_this<NetworkSession>
+            if (!validateID(log.component_id))
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        static bool validateTimestamp(uint64_t timestamp) noexcept
+        {
+            auto ActualTime = std::chrono::system_clock::now();
+            auto UnixDuration = std::chrono::duration_cast<std::chrono::seconds>(ActualTime.time_since_epoch());
+            uint64_t CurrentTime = static_cast<uint64_t>(UnixDuration.count());
+
+            constexpr uint64_t MinAllowedTime = 1780000000; // 01/06/2026 
+            constexpr uint64_t MaxAllowedTime = 5; // Tolerate 5 seconds into the future
+
+            if (timestamp < MinAllowedTime || timestamp >(CurrentTime + MaxAllowedTime))
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        static bool validateID(uint32_t id) noexcept
+        {
+            if (id < 1 || id > 250)
+            {
+                return false;
+            }
+            return true;
+        }
+    };
+
+    template <typename SecurityCheck>
+    class NetworkSession : public std::enable_shared_from_this<NetworkSession<SecurityCheck>>
     {
     private:
 
@@ -16,7 +62,7 @@ namespace Network
         Core::LogQueue& log_queue_;
 
         uint32_t body_length_buffer_ = 0;
-        std::vector<char> read_buffer_;
+        std::array<char, 1024 * 64> read_buffer_;
 
     public:
 
@@ -31,6 +77,7 @@ namespace Network
         void handle_error(const asio::error_code& ec);
     };
 
+    template <typename SecurityCheck>
     class LogServer
     {
     private:
