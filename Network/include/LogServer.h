@@ -32,9 +32,7 @@ namespace Network
 
         static bool validateTimestamp(uint64_t timestamp) noexcept
         {
-            auto ActualTime = std::chrono::system_clock::now();
-            auto UnixDuration = std::chrono::duration_cast<std::chrono::seconds>(ActualTime.time_since_epoch());
-            uint64_t CurrentTime = static_cast<uint64_t>(UnixDuration.count());
+            uint64_t CurrentTime = Network::Time::GetTime();
 
             constexpr uint64_t MinAllowedTime = 1780000000; // 01/06/2026 
             constexpr uint64_t MaxAllowedTime = 5; // Tolerate 5 seconds into the future

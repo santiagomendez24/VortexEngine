@@ -1,4 +1,5 @@
 #include "../include/LogServer.h"
+#include "../time/include/Time.h"
 #include <print>
 
 namespace Network
@@ -45,8 +46,7 @@ namespace Network
 	template<typename SecurityCheck>
 	void LogServer<SecurityCheck>::start_accept()
 	{
-		asio::ip::tcp::socket socket(io_context_);
-		acceptor_.async_accept(socket, [this, move_socket = std::move(socket)](const asio::error_code& ec) mutable
+		acceptor_.async_accept([this](const asio::error_code& ec, asio::ip::tcp::socket move_socket) mutable
 		{
 			if (!ec)
 			{
