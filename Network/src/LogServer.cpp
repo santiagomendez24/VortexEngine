@@ -1,27 +1,74 @@
 #include "../include/LogServer.h"
+#include <print>
 
 namespace Network
 {
-	LogServer::start_accept()
+	template<typename SecurityCheck>
+	LogServer<SecurityCheck>::LogServer(const uint16_t port, Core::LogQueue& log_queue) noexcept 
+		: acceptor_(asio::ip::tcp::acceptor(io_context_, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), port))), log_queue_(log_queue), pool_size_(std::thread::hardware_concurrency())
+	{ }
+
+	template<typename SecurityCheck>
+	LogServer<SecurityCheck>::~LogServer() noexcept
 	{
-		acceptor_.async_accept([this](const asio::error_code& ec, asio::ip::tcp::socket socket)
+		stop();
+	}
+
+	template<typename SecurityCheck>
+	void LogServer<SecurityCheck>::start()
+	{
+		start_accept();
+		thread_pool_.reserve(pool_size_);
+		
+		for (size_t i = 0; i < pool_size_; ++i)
+		{
+			thread_pool_.emplace_back([this]()
+			{
+				io_context_.run();
+			});
+		}
+	}
+
+	template<typename SecurityCheck>
+	void LogServer<SecurityCheck>::stop()
+	{
+		io_context_.stop();
+		for (auto& thread : thread_pool_)
+		{
+			if (thread.joinable())
+			{
+				thread.join();
+			}
+		}
+	}
+
+	template<typename SecurityCheck>
+	void LogServer<SecurityCheck>::start_accept()
+	{
+		asio::ip::tcp::socket socket(io_context_);
+		acceptor_.async_accept(socket, [this, move_socket = std::move(socket)](const asio::error_code& ec) mutable
 		{
 			if (!ec)
 			{
-				std::make_shared<NetworkSession<SecurityCheck>>(std::move(socket), log_queue_)->start();
+				std::make_shared<NetworkSession<SecurityCheck>>(std::move(move_socket), log_queue_)->start();
 			}
 			else
 			{
-				//Manejar error
+				std::print("Error al aceptar conexion: {}\n", ec.message());
 			}
 
 			start_accept();
 		});
 	}
 
-	NetworkSession::read_header()
+	template<typename SecurityCheck>
+	NetworkSession<SecurityCheck>::NetworkSession(asio::ip::tcp::socket socket, Core::LogQueue& queue) noexcept : socket_(std::move(socket)), log_queue_(queue)
+	{ }
+
+	template<typename SecurityCheck>
+	void NetworkSession<SecurityCheck>::read_header()
 	{
-		auto self = shared_from_this();
+		auto self = this->shared_from_this();
 
 		asio::async_read(socket_, asio::buffer(&body_length_buffer_, sizeof(body_length_buffer_)), [this, self](const asio::error_code& ec, std::size_t /*length*/)
 		{
@@ -37,7 +84,7 @@ namespace Network
 				}
 
 				auto data = asio::buffer(read_buffer_, body_length);
-				read_body(data.size());
+				read_body(static_cast<uint32_t>(data.size()));
 			}
 			else
 			{
@@ -46,9 +93,10 @@ namespace Network
 		});
 	}
 
-	NetworkSession::read_body(uint32_t lenght)
+	template<typename SecurityCheck>
+	void NetworkSession<SecurityCheck>::read_body(uint32_t lenght)
 	{
-		auto self = shared_from_this();
+		auto self = this->shared_from_this();
 		auto data = asio::buffer(read_buffer_, lenght);
 		
 		asio::async_read(socket_, data, [this, self](const asio::error_code& ec, std::size_t lenght)
@@ -66,7 +114,8 @@ namespace Network
 		});
 	}
 
-	NetworkSession::parse_and_push(const std::string_view& raw_data)
+	template<typename SecurityCheck>
+	void NetworkSession<SecurityCheck>::parse_and_push(const std::string_view& raw_data)
 	{
 		std::string_view view = raw_data;
 
@@ -139,4 +188,10 @@ namespace Network
 		}
 	}
 
+	template<typename SecurityCheck>
+	inline void NetworkSession<SecurityCheck>::handle_error(const asio::error_code& ec)
+	{
+		std::print("{}", ec.message());
+		socket_.close();
+	}
 }

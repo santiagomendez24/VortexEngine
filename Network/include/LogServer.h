@@ -5,7 +5,11 @@
 #include <vector>
 #include <thread>
 #include <chrono>
+#include <string_view>
 #include <array>
+#include <charconv>
+#include <algorithm>
+#include <winsock2.h>
 
 namespace Network
 {
@@ -66,15 +70,15 @@ namespace Network
 
     public:
 
-        explicit NetworkSession(asio::ip::tcp::socket socket, Core::LogQueue& queue);
-        void start();
+        NetworkSession(asio::ip::tcp::socket socket, Core::LogQueue& queue) noexcept;
+        void start() { read_header(); }
 
     private:
 
         void read_header();
         void read_body(uint32_t length);
         void parse_and_push(const std::string_view& raw_data);
-        void handle_error(const asio::error_code& ec);
+        inline void handle_error(const asio::error_code& ec);
     };
 
     template <typename SecurityCheck>
@@ -91,8 +95,8 @@ namespace Network
 
     public:
 
-        LogServer(Core::LogQueue& queue, uint16_t port, size_t pool_size);
-        ~LogServer();
+        LogServer(const uint16_t port, Core::LogQueue& queue) noexcept;
+        ~LogServer() noexcept;
 
         LogServer(const LogServer&) = delete;
         LogServer& operator=(const LogServer&) = delete;
