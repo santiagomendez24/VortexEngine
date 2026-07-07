@@ -68,7 +68,7 @@ namespace Network
 
     public:
 
-        NetworkSession(asio::ip::tcp::socket socket, Core::LogQueue& queue) noexcept;
+        explicit NetworkSession(asio::ip::tcp::socket socket, Core::LogQueue& queue) noexcept;
         void start() { read_header(); }
 
     private:
@@ -93,7 +93,7 @@ namespace Network
 
     public:
 
-        LogServer(const uint16_t port, Core::LogQueue& queue) noexcept;
+        explicit LogServer(const uint16_t port, Core::LogQueue& queue) noexcept;
         ~LogServer() noexcept;
 
         LogServer(const LogServer&) = delete;

@@ -46,7 +46,7 @@ namespace Network
 	template<typename SecurityCheck>
 	void LogServer<SecurityCheck>::start_accept()
 	{
-		acceptor_.async_accept([this](const asio::error_code& ec, asio::ip::tcp::socket move_socket) mutable
+		acceptor_.async_accept([this](const asio::error_code& ec, asio::ip::tcp::socket&& move_socket) mutable
 		{
 			if (!ec)
 			{

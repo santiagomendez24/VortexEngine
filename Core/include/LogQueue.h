@@ -9,6 +9,7 @@
 #include <string>
 #include <new>
 #include <cstdint>
+#include <atomic>
 #include <array>
 
 namespace Core
@@ -42,21 +43,20 @@ namespace Core
         alignas(std::hardware_destructive_interference_size) std::condition_variable cv;
         bool is_running = true;
 
-        /* "inline static" works for MaxCapacity being the same for every open instance of LogQueue, if you put 1MB in the first instance
-        and 100MB in the second it will erase the megabyte and will be 100MB for both */
-        // Erase "inline static" if you want that MaxCapacity is unique for each instance of LogQueue, but it will consume the choosen ram for each instance
-        inline static size_t MaxCapacity;
+        size_t MaxCapacity;
+        size_t HighWatermark;
+        size_t LowWatermark;
 
-        inline static void GetMaxRamUsage(size_t usable_ram) noexcept
-        {
-            constexpr size_t MaxLogEntrySize = sizeof(LogEntry);
-            size_t MaxRamUsage = usable_ram * 1024 * 1024;
-            MaxCapacity = MaxRamUsage / MaxLogEntrySize;
-        }
+        void GetMaxRamUsage(size_t usable_ram) noexcept;
+
+        std::atomic<bool> high_watermark_tripped{ false };
+        Telemetry::Telemetry& telemetry_;
 
     public:
 
-        explicit LogQueue(size_t ram_usage) noexcept { GetMaxRamUsage(ram_usage); }
+        explicit LogQueue(size_t ram_usage, Telemetry::Telemetry& telemetry) noexcept : telemetry_(telemetry) { GetMaxRamUsage(ram_usage); }
+        ~LogQueue() noexcept = default;
+
         explicit LogQueue(const LogQueue&) noexcept = delete;
         LogQueue& operator=(const LogQueue&) = delete;
 

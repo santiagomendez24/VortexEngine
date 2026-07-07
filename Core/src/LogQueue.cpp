@@ -1,5 +1,6 @@
 #include "../include/LogQueue.h"
 #include <utility>
+#include <memory>
 
 namespace Core
 {
@@ -14,6 +15,17 @@ namespace Core
         if (!is_running) return;
 
         raw_queue.push(std::move(log_line));
+
+        telemetry_.RegisterPushed();
+
+        if (raw_queue.size() >= HighWatermark)
+        {
+            if (!high_watermark_tripped.exchange(true, std::memory_order_relaxed))
+            {
+                //Tirar reporte
+            }
+        }
+
         cv.notify_one();
     }
 
@@ -37,7 +49,31 @@ namespace Core
 
         out_log = std::move(raw_queue.front());
         raw_queue.pop();
+
+        if (raw_queue.size() <= LowWatermark)
+        {
+            if (high_watermark_tripped.exchange(false, std::memory_order_relaxed))
+            {
+                //Tirar reporte
+            }
+        }
+
+        if (raw_queue.size() < MaxCapacity)
+        {
+            cv.notify_one();
+        }
+
         return true;
+    }
+
+    void LogQueue::GetMaxRamUsage(size_t usable_ram) noexcept
+    {
+        constexpr size_t MaxLogEntrySize = sizeof(LogEntry);
+        size_t MaxRamUsage = usable_ram * 1024 * 1024;
+        MaxCapacity = MaxRamUsage / MaxLogEntrySize;
+
+        HighWatermark = (MaxCapacity * 8) / 10;
+        LowWatermark = (MaxCapacity * 2) / 10;
     }
 
 } 
