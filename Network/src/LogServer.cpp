@@ -6,41 +6,14 @@ namespace Network
 {
 	template<typename SecurityCheck>
 	LogServer<SecurityCheck>::LogServer(const uint16_t port, Core::LogQueue& log_queue) noexcept 
-		: acceptor_(asio::ip::tcp::acceptor(io_context_, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), port))), log_queue_(log_queue), pool_size_(std::thread::hardware_concurrency())
+		: acceptor_(asio::ip::tcp::acceptor(io_context_, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), port))), log_queue_(log_queue)
 	{ }
-
-	template<typename SecurityCheck>
-	LogServer<SecurityCheck>::~LogServer() noexcept
-	{
-		stop();
-	}
 
 	template<typename SecurityCheck>
 	void LogServer<SecurityCheck>::start()
 	{
 		start_accept();
-		thread_pool_.reserve(pool_size_);
-		
-		for (size_t i = 0; i < pool_size_; ++i)
-		{
-			thread_pool_.emplace_back([this]()
-			{
-				io_context_.run();
-			});
-		}
-	}
-
-	template<typename SecurityCheck>
-	void LogServer<SecurityCheck>::stop()
-	{
-		io_context_.stop();
-		for (auto& thread : thread_pool_)
-		{
-			if (thread.joinable())
-			{
-				thread.join();
-			}
-		}
+		io_context_.run();
 	}
 
 	template<typename SecurityCheck>

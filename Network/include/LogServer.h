@@ -88,9 +88,6 @@ namespace Network
         asio::ip::tcp::acceptor acceptor_;
         Core::LogQueue& log_queue_;
 
-        std::vector<std::thread> thread_pool_;
-        size_t pool_size_;
-
     public:
 
         explicit LogServer(const uint16_t port, Core::LogQueue& queue) noexcept;
@@ -100,7 +97,7 @@ namespace Network
         LogServer& operator=(const LogServer&) = delete;
 
         void start();
-        void stop();
+        void stop() noexcept { io_context_.stop(); }
 
     private:
 

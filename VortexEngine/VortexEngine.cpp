@@ -18,12 +18,20 @@ constexpr static size_t usable_ram = 1; // In MB
 
 int main()
 {
+	ThreadManager::LogClasses logClasses;
 	Telemetry::Telemetry telemetry;
 	Core::LogQueue logQueue(usable_ram, telemetry);
-	Network::Time::start();
+	Network::Time time;
 	Network::LogServer<Network::CheckLogEntry> logServer(8080, logQueue);
-	logServer.start();
+	ThreadManager::ThreadManager thread_manager({ThreadManager::ThreadProfile::Automatic, 0, 0, 0});
+
+	logClasses.logQueue = &logQueue;
+	logClasses.telemetry = &telemetry;
+	logClasses.time = &time;
+	logClasses.logServer = &logServer;
+
+	thread_manager.start_threads(logClasses);
 	std::cin.get();
-	logServer.stop();
+	thread_manager.stop_threads(logClasses);
 }
 

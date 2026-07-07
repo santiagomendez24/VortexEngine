@@ -3,32 +3,12 @@
 
 namespace Telemetry
 {
-	void Telemetry::start() noexcept
+	void Telemetry::update_telemetry() noexcept
 	{
-		if (active.exchange(true)) return;
+		uint64_t pushed = pushed_logs.load(std::memory_order_relaxed);
+		uint64_t eliminated = eliminated_logs.load(std::memory_order_relaxed);
 
-		telemetry_thread = std::thread([this]()
-		{
-			while (active.load(std::memory_order_relaxed()))
-			{
-				std::this_thread::sleep_for(std::chrono::seconds(2));
-
-				uint64_t pushed = pushed_logs.load(std::memory_order_relaxed);
-				uint64_t eliminated = eliminated_logs.load(std::memory_order_relaxed);
-
-				//Tirar reporte
-			}
-		});
-	}
-
-	void Telemetry::stop() noexcept
-	{
-		if (!active.exchange(false)) return;
-
-		if (telemetry_thread.joinable())
-		{
-			telemetry_thread.join();
-		}
+		//Tirar reporte
 	}
 
 	void Telemetry::RegisterPushed() noexcept

@@ -16,10 +16,7 @@ namespace Telemetry
 
 	public:
 
-		~Telemetry() noexcept { stop(); }
-
-		void start() noexcept;
-		void stop() noexcept;
+		void update_telemetry() noexcept;
 		void RegisterPushed() noexcept;
 		void RegisterEliminated() noexcept;
 	};

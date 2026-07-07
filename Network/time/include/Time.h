@@ -16,10 +16,8 @@ namespace Network
 	public:
 
 		Time() noexcept = default;
-		~Time() noexcept { stop(); }
 
-		static void start() noexcept;
-		static void stop() noexcept;
+		static void update_time() noexcept;
 
 		[[nodiscard]] static uint64_t GetTime() noexcept;
 	};

@@ -4,7 +4,6 @@
 
 namespace Core
 {
-
     void LogQueue::push(LogEntry&& log_line)
     {
         std::unique_lock<std::mutex> lock(queue_mutex);
@@ -75,5 +74,4 @@ namespace Core
         HighWatermark = (MaxCapacity * 8) / 10;
         LowWatermark = (MaxCapacity * 2) / 10;
     }
-
 } 
