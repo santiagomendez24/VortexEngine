@@ -21,7 +21,7 @@ int main()
 	ThreadManager::LogClasses logClasses;
 
 	auto telemetry = std::make_shared<Telemetry::Telemetry>();
-	auto logQueue = std::make_shared<Core::LogQueue>(usable_ram, *telemetry);
+	auto logQueue = std::make_shared<Core::LogQueue>(usable_ram, *telemetry, Core::OverflowProfile::Block);
 	auto logServer = std::make_shared<Network::LogServer<Network::CheckLogEntry>>(8080, *logQueue);
 	ThreadManager::ThreadManager thread_manager({ThreadManager::ThreadProfile::Automatic, 0, 0, 0});
 

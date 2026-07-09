@@ -13,8 +13,6 @@ namespace Network
 
 	public:
 
-		Time() noexcept = default;
-
 		static void update_time() noexcept;
 
 		[[nodiscard]] static uint64_t GetTime() noexcept;

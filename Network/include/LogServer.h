@@ -22,7 +22,7 @@ namespace Network
                 return false;
             }
 
-            if (!validateID(log.component_id))
+            if (!validateID(log.log_id))
             {
                 return false;
             }
@@ -53,6 +53,16 @@ namespace Network
             }
             return true;
         }
+    
+        static bool validate_fromcharts(const std::errc ec)
+        {
+            if (ec == std::errc::invalid_argument || ec == std::errc::result_out_of_range)
+            {
+                return false;
+            }
+
+            return true;
+        }
     };
 
     template <typename SecurityCheck>
@@ -64,7 +74,7 @@ namespace Network
         Core::LogQueue& log_queue_;
 
         uint32_t body_length_buffer_ = 0;
-        std::array<char, 1024 * 64> read_buffer_;
+        alignas(32) std::array<char, 1024 * 64> read_buffer_;
 
     public:
 
@@ -75,8 +85,25 @@ namespace Network
 
         void read_header();
         void read_body(uint32_t length);
-        void parse_and_push(const std::string_view& raw_data);
+
+        static void parse_and_push(std::string_view raw_data, Core::LogQueue& log_queue);
+        static void parse_and_push_simd(std::string_view raw_data, Core::LogQueue& log_queue);
+
         inline void handle_error(const asio::error_code& ec);
+
+        using ParserFunc = void(*)(std::string_view raw_data, Core::LogQueue& log_queue);
+
+        static ParserFunc GetBestParser()
+        {
+            if (__builtin_cpu_supports("avx2"))
+            {
+                return parse_and_push_simd;
+            }
+
+            return parse_and_push;
+        }
+
+        ParserFunc CurrentParser;
     };
 
     template <typename SecurityCheck>

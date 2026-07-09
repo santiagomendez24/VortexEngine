@@ -47,13 +47,30 @@ namespace ThreadManager
 
 		[[nodiscard]] size_t CalculateAutomaticThread(size_t TotalHardware) noexcept;
 
+		void ValidateTotalManual();
+
 	public:
 
-		ThreadManager(ThreadConfig user_config) noexcept : config(user_config) { config.threads_num = CalculateThreads(config); }
+		ThreadManager(ThreadConfig user_config) noexcept : config(user_config) 
+		{ 
+			size_t calc = CalculateThreads(config);
+			if (calc == 0)
+			{
+				std::cerr << "[VORTEX ENGINE - WARN] Configuracion de hilos invalida ("
+					<< config.threads_num << "). Fallback a perfil Automatico aplicado."
+					<< std::endl;
+				config.thread_profile = ThreadProfile::Automatic;
+				config.threads_num = CalculateThreads(config);
+			}
+			else
+			{
+				config.threads_num = calc;
+			}
+		}
 
 		size_t CalculateThreads(ThreadConfig config) noexcept;
 
-		void start_threads(LogClasses log_classes) noexcept;
+		void start_threads(const LogClasses& log_classes) noexcept;
 
 		void stop_threads(LogClasses log_classes) noexcept;
 	};

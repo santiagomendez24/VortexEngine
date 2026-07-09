@@ -23,12 +23,19 @@ namespace Core
         Critical
     };
 
+    enum class OverflowProfile : uint8_t
+    {
+        Block,
+        DropAll,
+        DropNonCritical,
+        Spillover
+    };
+
     struct LogEntry
     {
         uint64_t timestamp;    
         std::string raw_log;
-        uint16_t offset_level;
-        uint16_t offset_msg;
+        uint32_t log_id;
         LogLevel level;
 
         [[nodiscard]] size_t GetMemory() const noexcept
@@ -41,16 +48,16 @@ namespace Core
     {
     private:
 
-        alignas(std::hardware_destructive_interference_size) std::queue<LogEntry> raw_queue;
-        alignas(std::hardware_destructive_interference_size) std::mutex queue_mutex;
-        alignas(std::hardware_destructive_interference_size) std::condition_variable cv_push;
-        alignas(std::hardware_destructive_interference_size) std::condition_variable cv_pop;
+        std::queue<LogEntry> raw_queue;
+        std::mutex queue_mutex;
+        std::condition_variable cv_push;
+        std::condition_variable cv_pop;
         bool is_running = true;
 
         size_t MaxCapacity;
         size_t HighWatermark;
         size_t LowWatermark;
-        std::atomic<size_t> current_queue_bytes{ 0 };
+        size_t current_queue_bytes{ 0 };
 
         size_t waiting_threads{ 0 };
 
@@ -59,9 +66,11 @@ namespace Core
         bool high_watermark_tripped{ false };
         Telemetry::Telemetry& telemetry_;
 
+        OverflowProfile overflow;
+
     public:
 
-        explicit LogQueue(size_t ram_usage, Telemetry::Telemetry& telemetry) noexcept : telemetry_(telemetry) { GetMaxRamUsage(ram_usage); }
+        explicit LogQueue(size_t ram_usage, Telemetry::Telemetry& telemetry, OverflowProfile& over) noexcept : telemetry_(telemetry), overflow(over) { GetMaxRamUsage(ram_usage); }
         ~LogQueue() noexcept = default;
 
         explicit LogQueue(const LogQueue&) noexcept = delete;

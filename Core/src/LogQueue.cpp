@@ -10,7 +10,38 @@ namespace Core
         if (!is_running) return;
 
         waiting_threads++;
-        cv_push.wait(lock, [this, &log_line] { return !is_running || current_queue_bytes == 0 || current_queue_bytes + log_line.GetMemory() < MaxCapacity; });
+
+        if (current_queue_bytes + log_line.GetMemory() > MaxCapacity)
+        {
+            switch (overflow)
+            {
+                case Core::OverflowProfile::Block:
+
+                    cv_push.wait(lock, [this, &log_line] { return !is_running || current_queue_bytes == 0 || current_queue_bytes + log_line.GetMemory() < MaxCapacity; });
+                    break;
+
+                case Core::OverflowProfile::DropAll:
+
+                    waiting_threads--;
+                    return;
+
+                case Core::OverflowProfile::DropNonCritical:
+
+                    if (log_line.level < LogLevel::Critical)
+                    {
+                        waiting_threads--;
+                        return;
+                    }
+                    cv_push.wait(lock, [this, &log_line] { return !is_running || current_queue_bytes == 0 || current_queue_bytes + log_line.GetMemory() < MaxCapacity; });
+                    break;
+
+                case Core::OverflowProfile::Spillover:
+
+                    //Levar al disco
+                    break;
+            }
+        }
+
         waiting_threads--;
 
         if (!is_running) return;
@@ -19,6 +50,7 @@ namespace Core
         raw_queue.push(std::move(log_line));
 
         telemetry_.RegisterPushed();
+        telemetry_.UpdateQueueBytes(current_queue_bytes);
 
         if (current_queue_bytes >= HighWatermark)
         {
@@ -55,6 +87,9 @@ namespace Core
         out_log = std::move(raw_queue.front());
         raw_queue.pop();
 
+        telemetry_.RegisterEliminated();
+        telemetry_.UpdateQueueBytes(current_queue_bytes);
+
         if (current_queue_bytes <= LowWatermark)
         {
             if (high_watermark_tripped)
@@ -74,10 +109,7 @@ namespace Core
 
     void LogQueue::GetMaxRamUsage(size_t usable_ram) noexcept
     {
-        constexpr size_t MaxLogEntrySize = sizeof(LogEntry);
-        size_t MaxRamUsage = usable_ram * 1024 * 1024;
-        MaxCapacity = MaxRamUsage / MaxLogEntrySize;
-
+        MaxCapacity = usable_ram * 1024 * 1024;
         HighWatermark = (MaxCapacity * 8) / 10;
         LowWatermark = (MaxCapacity * 2) / 10;
     }

@@ -21,14 +21,23 @@ namespace ThreadManager
 
 		if (config.thread_profile == ThreadProfile::FastManual)
 		{
-			if (config.threads_num <= 0 || config.threads_num > total_thread) return total_thread;
+			if (config.threads_num <= 0 || config.threads_num >= total_thread - 2) return 0;
 
 			return config.threads_num;
 		}
 
 		if (config.thread_profile == ThreadProfile::TotalManual)
 		{
-			// Configuracion total, la programo ahorita
+			size_t net = config.network_num;
+			size_t pop = config.consumer_num;
+			size_t sum = net + pop;
+
+			if (sum >= total_thread - 2 || sum <= 0 || config.threads_num <= 0 || config.threads_num >= total_thread - 2)
+			{
+				return 0;
+			}
+
+			return config.threads_num;
 		}
 
 		return total_thread;
@@ -59,12 +68,17 @@ namespace ThreadManager
 		return thread_calc;
 	}
 
-	void ThreadManager::start_threads(LogClasses log_classes) noexcept
+	void ThreadManager::start_threads(const LogClasses& log_classes) noexcept
 	{
+		Network::Time::update_time();
+
+		auto local_telemetry = log_classes.telemetry;
+		auto local_logQueue = log_classes.logQueue;
+		auto local_logServer = log_classes.logServer;
+
 		is_on.store(true, std::memory_order_relaxed);
 
 		size_t thread_n = config.threads_num;
-
 		size_t net_num = 0;
 		size_t consum_num = 0;
 
@@ -83,39 +97,39 @@ namespace ThreadManager
 			if (consum_num == 0) consum_num = 1;
 		}
 
-		time_thread = std::thread([this, log_classes]()
+		time_thread = std::thread([this]()
 		{
 			while (is_on.load(std::memory_order_relaxed))
 			{
-				std::this_thread::sleep_for(std::chrono::seconds(2));
 				Network::Time::update_time();
+				std::this_thread::sleep_for(std::chrono::seconds(2));
 			}
 		});
 
-		telemetry_thread = std::thread([this, log_classes]()
+		telemetry_thread = std::thread([this, local_telemetry]()
 		{
 			while (is_on.load(std::memory_order_relaxed))
 			{
-				log_classes.telemetry->update_telemetry();
+				local_telemetry->update_telemetry();
 				std::this_thread::sleep_for(std::chrono::seconds(1));
 			}
 		});
 
-		log_classes.logServer->start_accept();
+		local_logServer->start_accept();
 		for (size_t i = 0; i < net_num; ++i)
 		{
-			network_pool.emplace_back([log_classes]()
+			network_pool.emplace_back([local_logServer]()
 			{
-				log_classes.logServer->start();
+				local_logServer->start();
 			});
 		}
 
 		for (size_t i = 0; i < consum_num; ++i)
 		{
-			consumer_pool.emplace_back([log_classes]()
+			consumer_pool.emplace_back([local_logQueue]()
 			{
 				Core::LogEntry out_entry;
-				while (log_classes.logQueue->pop(out_entry))
+				while (local_logQueue->pop(out_entry))
 				{
 					//aqui lo saco
 				}
