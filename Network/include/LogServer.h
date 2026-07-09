@@ -86,6 +86,10 @@ namespace Network
 
         asio::io_context io_context_;
         asio::ip::tcp::acceptor acceptor_;
+
+        asio::executor_work_guard<asio::io_context::executor_type> work_guard_;
+        asio::strand<asio::io_context::executor_type> accept_strand_;
+
         Core::LogQueue& log_queue_;
 
     public:
@@ -97,10 +101,7 @@ namespace Network
         LogServer& operator=(const LogServer&) = delete;
 
         void start();
-        void stop() noexcept { io_context_.stop(); }
-
-    private:
-
+        void stop() noexcept { work_guard_.reset();  io_context_.stop(); }
         void start_accept();
     };
 }

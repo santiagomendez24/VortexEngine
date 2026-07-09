@@ -19,16 +19,15 @@ constexpr static size_t usable_ram = 1; // In MB
 int main()
 {
 	ThreadManager::LogClasses logClasses;
-	Telemetry::Telemetry telemetry;
-	Core::LogQueue logQueue(usable_ram, telemetry);
-	Network::Time time;
-	Network::LogServer<Network::CheckLogEntry> logServer(8080, logQueue);
+
+	auto telemetry = std::make_shared<Telemetry::Telemetry>();
+	auto logQueue = std::make_shared<Core::LogQueue>(usable_ram, *telemetry);
+	auto logServer = std::make_shared<Network::LogServer<Network::CheckLogEntry>>(8080, *logQueue);
 	ThreadManager::ThreadManager thread_manager({ThreadManager::ThreadProfile::Automatic, 0, 0, 0});
 
-	logClasses.logQueue = &logQueue;
-	logClasses.telemetry = &telemetry;
-	logClasses.time = &time;
-	logClasses.logServer = &logServer;
+	logClasses.logQueue = logQueue;
+	logClasses.telemetry = telemetry;
+	logClasses.logServer = logServer;
 
 	thread_manager.start_threads(logClasses);
 	std::cin.get();

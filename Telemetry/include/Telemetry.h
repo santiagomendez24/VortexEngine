@@ -11,8 +11,6 @@ namespace Telemetry
 
 		std::atomic<uint64_t> pushed_logs{ 0 };
 		std::atomic<uint64_t> eliminated_logs{ 0 };
-		std::atomic<bool> active{ false };
-		std::thread telemetry_thread;
 
 	public:
 

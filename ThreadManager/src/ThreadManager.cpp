@@ -65,8 +65,6 @@ namespace ThreadManager
 
 		size_t thread_n = config.threads_num;
 
-		if (thread_n >= 2) thread_n -= 2;
-
 		size_t net_num = 0;
 		size_t consum_num = 0;
 
@@ -90,7 +88,7 @@ namespace ThreadManager
 			while (is_on.load(std::memory_order_relaxed))
 			{
 				std::this_thread::sleep_for(std::chrono::seconds(2));
-				log_classes.time->update_time();
+				Network::Time::update_time();
 			}
 		});
 
@@ -103,6 +101,7 @@ namespace ThreadManager
 			}
 		});
 
+		log_classes.logServer->start_accept();
 		for (size_t i = 0; i < net_num; ++i)
 		{
 			network_pool.emplace_back([log_classes]()
@@ -126,8 +125,9 @@ namespace ThreadManager
 
 	void ThreadManager::stop_threads(LogClasses log_classes) noexcept
 	{
-		network_work_guard.reset();
 		log_classes.logServer->stop();
+		log_classes.logQueue->set_finished();
+
 		is_on.store(false, std::memory_order_relaxed);
 
 		for (auto& thread : network_pool)
@@ -137,8 +137,6 @@ namespace ThreadManager
 				thread.join();
 			}
 		}
-
-		log_classes.logQueue->set_finished();
 
 		for (auto& thread : consumer_pool)
 		{

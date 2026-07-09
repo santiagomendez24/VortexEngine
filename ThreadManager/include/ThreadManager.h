@@ -4,6 +4,7 @@
 #include <vector>
 #include <optional>
 #include <asio.hpp>
+#include <new>
 
 namespace ThreadManager
 {
@@ -25,10 +26,9 @@ namespace ThreadManager
 
 	struct LogClasses
 	{
-		Telemetry::Telemetry* telemetry;
-		Core::LogQueue* logQueue;
-		Network::Time* time;
-		Network::LogServer<Network::CheckLogEntry>* logServer;
+		std::shared_ptr<Telemetry::Telemetry> telemetry;
+		std::shared_ptr<Core::LogQueue> logQueue;
+		std::shared_ptr<Network::LogServer<Network::CheckLogEntry>> logServer;
 	};
 
 	class ThreadManager
@@ -40,8 +40,6 @@ namespace ThreadManager
 
 		std::thread time_thread;
 		std::thread telemetry_thread;
-
-		std::optional<asio::executor_work_guard<asio::io_context::executor_type>> network_work_guard;
 
 		std::atomic<bool> is_on{ false };
 

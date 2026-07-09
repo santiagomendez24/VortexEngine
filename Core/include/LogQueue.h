@@ -14,8 +14,9 @@
 
 namespace Core
 {
-    enum class LogLevel
+    enum class LogLevel : uint8_t
     {
+        Debug,
         Info,
         Warning,
         Error,
@@ -24,32 +25,38 @@ namespace Core
 
     struct LogEntry
     {
-        uint64_t timestamp;     
-        LogLevel level;          
-        uint32_t component_id;   
+        uint64_t timestamp;    
+        std::string raw_log;
+        uint16_t offset_level;
+        uint16_t offset_msg;
+        LogLevel level;
 
-        std::array<char, 64> location;
-        std::array<char, 256> message;
-        std::array<char, 128> context;
+        [[nodiscard]] size_t GetMemory() const noexcept
+        {
+            return sizeof(*this) + raw_log.capacity();
+        }
     };
 
     class LogQueue
     {
     private:
 
-        std::queue<LogEntry> raw_queue;
-        std::mutex queue_mutex;
-
-        alignas(std::hardware_destructive_interference_size) std::condition_variable cv;
+        alignas(std::hardware_destructive_interference_size) std::queue<LogEntry> raw_queue;
+        alignas(std::hardware_destructive_interference_size) std::mutex queue_mutex;
+        alignas(std::hardware_destructive_interference_size) std::condition_variable cv_push;
+        alignas(std::hardware_destructive_interference_size) std::condition_variable cv_pop;
         bool is_running = true;
 
         size_t MaxCapacity;
         size_t HighWatermark;
         size_t LowWatermark;
+        std::atomic<size_t> current_queue_bytes{ 0 };
+
+        size_t waiting_threads{ 0 };
 
         void GetMaxRamUsage(size_t usable_ram) noexcept;
 
-        std::atomic<bool> high_watermark_tripped{ false };
+        bool high_watermark_tripped{ false };
         Telemetry::Telemetry& telemetry_;
 
     public:

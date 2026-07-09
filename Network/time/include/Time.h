@@ -5,13 +5,11 @@
 
 namespace Network
 {
-	class Time : public std::enable_shared_from_this<Time>
+	class Time
 	{
 	private:
 
 		inline static std::atomic<uint64_t> unix_time{ 0 };
-		inline static std::atomic<bool> active{ false };
-		inline static std::thread time_thread;
 
 	public:
 

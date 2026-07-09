@@ -9,23 +9,27 @@ namespace Core
         std::unique_lock<std::mutex> lock(queue_mutex);
         if (!is_running) return;
 
-        cv.wait(lock, [this] { return raw_queue.size() < MaxCapacity || !is_running; });
+        waiting_threads++;
+        cv_push.wait(lock, [this, &log_line] { return !is_running || current_queue_bytes == 0 || current_queue_bytes + log_line.GetMemory() < MaxCapacity; });
+        waiting_threads--;
 
         if (!is_running) return;
 
+        current_queue_bytes += log_line.GetMemory();
         raw_queue.push(std::move(log_line));
 
         telemetry_.RegisterPushed();
 
-        if (raw_queue.size() >= HighWatermark)
+        if (current_queue_bytes >= HighWatermark)
         {
-            if (!high_watermark_tripped.exchange(true, std::memory_order_relaxed))
+            if (!high_watermark_tripped)
             {
+                high_watermark_tripped = true;
                 //Tirar reporte
             }
         }
 
-        cv.notify_one();
+        cv_pop.notify_one();
     }
 
     void LogQueue::set_finished()
@@ -33,33 +37,36 @@ namespace Core
         std::lock_guard<std::mutex> lock(queue_mutex);
         is_running = false;
 
-        cv.notify_all();
+        cv_push.notify_all();
+        cv_pop.notify_all();
     }
 
     bool LogQueue::pop(LogEntry& out_log)
     {
         std::unique_lock<std::mutex> lock(queue_mutex);
-        cv.wait(lock, [this] { return !raw_queue.empty() || !is_running; });
+        cv_pop.wait(lock, [this] { return !raw_queue.empty() || !is_running; });
 
         if (raw_queue.empty() && !is_running)
         {
             return false;
         }
 
+        current_queue_bytes -= raw_queue.front().GetMemory();
         out_log = std::move(raw_queue.front());
         raw_queue.pop();
 
-        if (raw_queue.size() <= LowWatermark)
+        if (current_queue_bytes <= LowWatermark)
         {
-            if (high_watermark_tripped.exchange(false, std::memory_order_relaxed))
+            if (high_watermark_tripped)
             {
+                high_watermark_tripped = false;
                 //Tirar reporte
             }
         }
 
-        if (raw_queue.size() < MaxCapacity)
+        if (current_queue_bytes < MaxCapacity && waiting_threads > 0)
         {
-            cv.notify_one();
+            cv_push.notify_all();
         }
 
         return true;
