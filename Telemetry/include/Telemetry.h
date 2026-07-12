@@ -11,13 +11,15 @@ namespace Telemetry
 
 		std::atomic<uint64_t> pushed_logs{ 0 };
 		std::atomic<uint64_t> eliminated_logs{ 0 };
-		std::atomic<uint64_t> current_queue_bytes{ 0 };
+
+		uint64_t last_pushed = 0;
+		uint64_t last_popped = 0;
 
 	public:
 
 		void update_telemetry() noexcept;
 		void RegisterPushed() noexcept;
 		void RegisterEliminated() noexcept;
-		void UpdateQueueBytes(size_t CurrentBytes) noexcept;
+		void GetVelocity(uint64_t pushed, uint64_t popped) noexcept;
 	};
 }

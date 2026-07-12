@@ -1,5 +1,6 @@
 #include "../include/Telemetry.h"
 #include <chrono>
+#include <print>
 
 namespace Telemetry
 {
@@ -7,9 +8,10 @@ namespace Telemetry
 	{
 		uint64_t pushed = pushed_logs.load(std::memory_order_relaxed);
 		uint64_t eliminated = eliminated_logs.load(std::memory_order_relaxed);
-		uint64_t queue_bytes = current_queue_bytes.load(std::memory_order_relaxed);
 
-		//Tirar reporte
+		std::print("Pushed: {}, Popped: {}", pushed, eliminated);
+
+		GetVelocity(pushed, eliminated);
 	}
 
 	void Telemetry::RegisterPushed() noexcept
@@ -22,8 +24,17 @@ namespace Telemetry
 		eliminated_logs.fetch_add(1, std::memory_order_relaxed);
 	}
 
-	void Telemetry::UpdateQueueBytes(size_t CurrentBytes) noexcept
+	void Telemetry::GetVelocity(uint64_t pushed, uint64_t popped) noexcept
 	{
-		current_queue_bytes.exchange(CurrentBytes, std::memory_order_relaxed);
+		uint64_t delta_push = pushed - last_pushed;
+		uint64_t delta_popped = popped - last_popped;
+
+		double push_per_sec = static_cast<double>(delta_push) / 2.0;
+		double pop_per_sec = static_cast<double>(delta_popped) / 2.0;
+
+		std::print("Push por segundo: {} logs/s, Pop por segundo: {} logs/s", push_per_sec, pop_per_sec);
+		
+		last_pushed = pushed;
+		last_popped = popped;
 	}
 }

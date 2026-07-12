@@ -1,28 +1,26 @@
 #include "../include/LogServer.h"
-#include "../time/include/Time.h"
 #include <print>
+#include <intrin.h>
 
 namespace Network
 {
-	template<typename SecurityCheck>
-	LogServer<SecurityCheck>::LogServer(const uint16_t port, Core::LogQueue& log_queue) noexcept 
-		: acceptor_(asio::ip::tcp::acceptor(io_context_, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), port))), log_queue_(log_queue), work_guard_(asio::make_work_guard(io_context_)), accept_strand_(asio::make_strand(io_context_))
+	LogServer::LogServer(const uint16_t port) noexcept 
+		: acceptor_(asio::ip::tcp::acceptor(io_context_, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), port))), work_guard_(asio::make_work_guard(io_context_)), accept_strand_(asio::make_strand(io_context_))
 	{ }
 
-	template<typename SecurityCheck>
-	void LogServer<SecurityCheck>::start()
+	void LogServer::start(Core::LogQueue* ptr)
 	{
+		transitory_ptr = ptr;
 		io_context_.run();
 	}
 
-	template<typename SecurityCheck>
-	void LogServer<SecurityCheck>::start_accept()
+	void LogServer::start_accept()
 	{
 		acceptor_.async_accept(asio::bind_executor(accept_strand_, [this](const asio::error_code& ec, asio::ip::tcp::socket&& move_socket) mutable
 		{
 			if (!ec)
 			{
-				std::make_shared<NetworkSession<SecurityCheck>>(std::move(move_socket), log_queue_)->start();
+				std::make_shared<NetworkSession>(std::move(move_socket))->start(transitory_ptr);
 			}
 			else
 			{
@@ -32,13 +30,10 @@ namespace Network
 			start_accept();
 		}));
 	}
-
-	template<typename SecurityCheck>
-	NetworkSession<SecurityCheck>::NetworkSession(asio::ip::tcp::socket socket, Core::LogQueue& queue) noexcept : socket_(std::move(socket)), log_queue_(queue), CurrentParser(GetBestParser())
+	NetworkSession::NetworkSession(asio::ip::tcp::socket socket) noexcept : socket_(std::move(socket)), CurrentParser(GetBestParser())
 	{ }
 
-	template<typename SecurityCheck>
-	void NetworkSession<SecurityCheck>::read_header()
+	void NetworkSession::read_header()
 	{
 		auto self = this->shared_from_this();
 
@@ -48,7 +43,7 @@ namespace Network
 			{
 				uint32_t body_length = ntohl(body_length_buffer_);
 
-				const uint32_t MAX_LOG_SIZE = 1024 * 64;
+				const uint32_t MAX_LOG_SIZE = 10 * 1024 * 1024;
 				if (body_length > MAX_LOG_SIZE)
 				{
 					handle_error(asio::error::message_size);
@@ -65,8 +60,7 @@ namespace Network
 		});
 	}
 
-	template<typename SecurityCheck>
-	void NetworkSession<SecurityCheck>::read_body(uint32_t lenght)
+	void NetworkSession::read_body(uint32_t lenght)
 	{
 		auto self = this->shared_from_this();
 		auto data = asio::buffer(read_buffer_, lenght);
@@ -76,7 +70,7 @@ namespace Network
 			if (!ec)
 			{
 				std::string_view view(read_buffer_.data(), lenght);
-				CurrentParser(view, log_queue_);
+				CurrentParser(view, this);
 				read_header();
 			}
 			else
@@ -86,8 +80,7 @@ namespace Network
 		});
 	}
 
-	template<typename SecurityCheck>
-	void NetworkSession<SecurityCheck>::parse_and_push(std::string_view raw_data, Core::LogQueue& log_queue)
+	void NetworkSession::parse_and_push(std::string_view raw_data, Network::NetworkSession* session)
 	{
 		auto part_1 = raw_data.find(' ');
 		if (part_1 == std::string_view::npos) return;
@@ -116,24 +109,36 @@ namespace Network
 
 		std::string_view message = raw_data.substr(part_3 + 1);
 
-		Core::LogEntry log_entry;
+		size_t offset = 0;
+		size_t total_size = message.size();
 
-		log_entry.timestamp = time;
-		log_entry.log_id = id;
-		log_entry.level = log_level;
-		log_entry.raw_log = message;
+		while (offset < total_size)
+		{
+			Core::LogEntry log_entry;
+			log_entry.level = log_level;
+			log_entry.log_id = id;
+			log_entry.timestamp = time;
 
-		if (!CheckLogEntry::validate(log_entry)) return;
+			size_t secure_bytes = std::min(total_size - offset, log_entry.raw_log.size());
 
-		log_queue.push(std::move(log_entry));
+			std::copy_n(message.data() + offset, secure_bytes, log_entry.raw_log.data());
+			log_entry.message_lenght = static_cast<uint8_t>(secure_bytes);
+
+			offset += secure_bytes;
+
+			log_entry.is_continued = (offset < total_size);
+
+			if (!CheckLogEntry::validate(log_entry)) return;
+
+			session->assigned_ptr->push(std::move(log_entry));
+		}
 	}
 
-	template<typename SecurityCheck>
-	void NetworkSession<SecurityCheck>::parse_and_push_simd(std::string_view raw_data, Core::LogQueue& log_queue)
+	void NetworkSession::parse_and_push_simd(std::string_view raw_data, Network::NetworkSession* session)
 	{
 		if (raw_data.size() < 32)
 		{
-			parse_and_push(raw_data, log_queue);
+			parse_and_push(raw_data, session);
 			return;
 		}
 
@@ -151,7 +156,7 @@ namespace Network
 
 		while (copy_mask != 0)
 		{
-			uint32_t index = __builtin_ctz(copy_mask);
+			uint32_t index = count_trailing_zeros(copy_mask);
 			space_count++;
 
 			if (space_count == 1)
@@ -174,7 +179,7 @@ namespace Network
 
 		if (space_count < 3)
 		{
-			parse_and_push(raw_data, log_queue);
+			parse_and_push(raw_data, session);
 			return;
 		}
 
@@ -196,20 +201,32 @@ namespace Network
 
 		std::string_view message = raw_data.substr(third_space_index + 1);
 
-		Core::LogEntry log_entry;
+		size_t offset = 0;
+		size_t total_size = message.size();
 
-		log_entry.level = log_level;
-		log_entry.log_id = id;
-		log_entry.raw_log = message;
-		log_entry.timestamp = time;
+		while (offset < total_size)
+		{
+			Core::LogEntry log_entry;
+			log_entry.level = log_level;
+			log_entry.log_id = id;
+			log_entry.timestamp = time;
 
-		if (!CheckLogEntry::validate(log_entry)) return;
+			size_t secure_bytes = std::min(total_size - offset, log_entry.raw_log.size());
 
-		log_queue.push(std::move(log_entry));
+			std::copy_n(message.data() + offset, secure_bytes, log_entry.raw_log.data());
+			log_entry.message_lenght = static_cast<uint8_t>(secure_bytes);
+
+			offset += secure_bytes;
+
+			log_entry.is_continued = (offset < total_size);
+
+			if (!CheckLogEntry::validate(log_entry)) return;
+
+			session->assigned_ptr->push(std::move(log_entry));
+		}
 	}
 
-	template<typename SecurityCheck>
-	inline void NetworkSession<SecurityCheck>::handle_error(const asio::error_code& ec)
+	inline void NetworkSession::handle_error(const asio::error_code& ec)
 	{
 		std::print("{}", ec.message());
 		socket_.close();

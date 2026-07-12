@@ -5,16 +5,22 @@
 
 namespace Network
 {
-	class Time
+	namespace Tools
 	{
-	private:
+		class Time
+		{
+		private:
 
-		inline static std::atomic<uint64_t> unix_time{ 0 };
+			inline static std::atomic<uint64_t> unix_time{ 0 };
 
-	public:
+		public:
 
-		static void update_time() noexcept;
+			static void update_time() noexcept;
 
-		[[nodiscard]] static uint64_t GetTime() noexcept;
-	};
+			[[nodiscard]] inline static uint64_t GetTime() noexcept
+			{
+				return unix_time.load(std::memory_order_relaxed);
+			}
+		};
+	}
 }

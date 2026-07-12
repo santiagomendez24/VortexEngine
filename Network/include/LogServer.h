@@ -10,6 +10,7 @@
 #include <charconv>
 #include <algorithm>
 #include <winsock2.h>
+#include "../time/include/Time.h"
 
 namespace Network
 {
@@ -32,7 +33,7 @@ namespace Network
 
         static bool validateTimestamp(uint64_t timestamp) noexcept
         {
-            uint64_t CurrentTime = Network::Time::GetTime();
+            uint64_t CurrentTime = ::Network::Tools::Time::GetTime();
 
             constexpr uint64_t MinAllowedTime = 1780000000; // 01/06/2026 
             constexpr uint64_t MaxAllowedTime = 5; // Tolerate 5 seconds into the future
@@ -65,37 +66,38 @@ namespace Network
         }
     };
 
-    template <typename SecurityCheck>
-    class NetworkSession : public std::enable_shared_from_this<NetworkSession<SecurityCheck>>
+    class NetworkSession : public std::enable_shared_from_this<NetworkSession>
     {
     private:
 
         asio::ip::tcp::socket socket_;
-        Core::LogQueue& log_queue_;
 
         uint32_t body_length_buffer_ = 0;
         alignas(32) std::array<char, 1024 * 64> read_buffer_;
 
+        Core::LogQueue* assigned_ptr;
+
     public:
 
-        explicit NetworkSession(asio::ip::tcp::socket socket, Core::LogQueue& queue) noexcept;
-        void start() { read_header(); }
+        explicit NetworkSession(asio::ip::tcp::socket socket) noexcept;
+        ~NetworkSession() noexcept {}
+        void start(Core::LogQueue* ptr) noexcept { this->assigned_ptr = ptr; read_header(); }
 
     private:
 
         void read_header();
         void read_body(uint32_t length);
 
-        static void parse_and_push(std::string_view raw_data, Core::LogQueue& log_queue);
-        static void parse_and_push_simd(std::string_view raw_data, Core::LogQueue& log_queue);
+        static void parse_and_push(std::string_view raw_data, Network::NetworkSession* session);
+        static void parse_and_push_simd(std::string_view raw_data, Network::NetworkSession* session);
 
         inline void handle_error(const asio::error_code& ec);
 
-        using ParserFunc = void(*)(std::string_view raw_data, Core::LogQueue& log_queue);
+        using ParserFunc = void(*)(std::string_view raw_data, Network::NetworkSession* session);
 
         static ParserFunc GetBestParser()
         {
-            if (__builtin_cpu_supports("avx2"))
+            if (IsProcessorFeaturePresent(PF_AVX2_INSTRUCTIONS_AVAILABLE) != 0)
             {
                 return parse_and_push_simd;
             }
@@ -103,13 +105,24 @@ namespace Network
             return parse_and_push;
         }
 
+        inline static uint32_t count_trailing_zeros(uint32_t mask)
+        {
+            unsigned long index;
+            if (_BitScanForward(&index, mask))
+            {
+                return static_cast<uint32_t>(index);
+            }
+            return 0;
+        }
+
         ParserFunc CurrentParser;
     };
 
-    template <typename SecurityCheck>
     class LogServer
     {
     private:
+
+        Core::LogQueue* transitory_ptr;
 
         asio::io_context io_context_;
         asio::ip::tcp::acceptor acceptor_;
@@ -117,17 +130,15 @@ namespace Network
         asio::executor_work_guard<asio::io_context::executor_type> work_guard_;
         asio::strand<asio::io_context::executor_type> accept_strand_;
 
-        Core::LogQueue& log_queue_;
-
     public:
 
-        explicit LogServer(const uint16_t port, Core::LogQueue& queue) noexcept;
-        ~LogServer() noexcept;
+        explicit LogServer(const uint16_t port) noexcept;
+        ~LogServer() noexcept {}
 
         LogServer(const LogServer&) = delete;
         LogServer& operator=(const LogServer&) = delete;
 
-        void start();
+        void start(Core::LogQueue* ptr);
         void stop() noexcept { work_guard_.reset();  io_context_.stop(); }
         void start_accept();
     };

@@ -1,107 +1,71 @@
 #include "../include/LogQueue.h"
 #include <utility>
 #include <memory>
+#include <immintrin.h>
+#include <print>
 
 namespace Core
 {
     void LogQueue::push(LogEntry&& log_line)
     {
-        std::unique_lock<std::mutex> lock(queue_mutex);
+        if (!log_array) return;
         if (!is_running) return;
 
-        waiting_threads++;
+        size_t current_head = head.load(std::memory_order_relaxed);
+        size_t next_head = (current_head + 1) & CapacityMask;
 
-        if (current_queue_bytes + log_line.GetMemory() > MaxCapacity)
+        if (next_head == tail.load(std::memory_order_acquire))
         {
-            switch (overflow)
-            {
-                case Core::OverflowProfile::Block:
-
-                    cv_push.wait(lock, [this, &log_line] { return !is_running || current_queue_bytes == 0 || current_queue_bytes + log_line.GetMemory() < MaxCapacity; });
-                    break;
-
-                case Core::OverflowProfile::DropAll:
-
-                    waiting_threads--;
-                    return;
-
-                case Core::OverflowProfile::DropNonCritical:
-
-                    if (log_line.level < LogLevel::Critical)
-                    {
-                        waiting_threads--;
-                        return;
-                    }
-                    cv_push.wait(lock, [this, &log_line] { return !is_running || current_queue_bytes == 0 || current_queue_bytes + log_line.GetMemory() < MaxCapacity; });
-                    break;
-
-                case Core::OverflowProfile::Spillover:
-
-                    //Levar al disco
-                    break;
-            }
+            wait(next_head, log_line);
         }
 
-        waiting_threads--;
-
         if (!is_running) return;
 
-        current_queue_bytes += log_line.GetMemory();
-        raw_queue.push(std::move(log_line));
+        log_array[current_head] = log_line;
+
+        head.store(next_head, std::memory_order_release);
 
         telemetry_.RegisterPushed();
-        telemetry_.UpdateQueueBytes(current_queue_bytes);
 
-        if (current_queue_bytes >= HighWatermark)
+        size_t occupied_slots = (next_head - tail.load(std::memory_order_acquire)) & CapacityMask;
+
+        if (occupied_slots >= HighWatermark.load(std::memory_order_relaxed))
         {
-            if (!high_watermark_tripped)
-            {
-                high_watermark_tripped = true;
-                //Tirar reporte
-            }
+            high_watermark_tripped.exchange(true, std::memory_order_relaxed);
+            std::print("Mas del 80% usado de {}, uso {}", MaxCapacity, HighWatermark.load());
         }
-
-        cv_pop.notify_one();
     }
 
-    void LogQueue::set_finished()
+    void LogQueue::set_finished() noexcept
     {
-        std::lock_guard<std::mutex> lock(queue_mutex);
         is_running = false;
-
-        cv_push.notify_all();
-        cv_pop.notify_all();
     }
 
     bool LogQueue::pop(LogEntry& out_log)
     {
-        std::unique_lock<std::mutex> lock(queue_mutex);
-        cv_pop.wait(lock, [this] { return !raw_queue.empty() || !is_running; });
+        if (!is_running) return false;
 
-        if (raw_queue.empty() && !is_running)
+        size_t current_tail = tail.load(std::memory_order_relaxed);
+
+        if (current_tail == head.load(std::memory_order_acquire))
         {
             return false;
         }
 
-        current_queue_bytes -= raw_queue.front().GetMemory();
-        out_log = std::move(raw_queue.front());
-        raw_queue.pop();
+        if (!is_running) return false;
+
+        out_log = std::move(log_array[current_tail]);
+
+        tail.store((current_tail + 1) & CapacityMask, std::memory_order_release);
 
         telemetry_.RegisterEliminated();
-        telemetry_.UpdateQueueBytes(current_queue_bytes);
 
-        if (current_queue_bytes <= LowWatermark)
-        {
-            if (high_watermark_tripped)
-            {
-                high_watermark_tripped = false;
-                //Tirar reporte
-            }
-        }
+        size_t freed_slots = (current_tail - (head.load(std::memory_order_acquire))) & CapacityMask;
 
-        if (current_queue_bytes < MaxCapacity && waiting_threads > 0)
+        if (freed_slots <= LowWatermark.load(std::memory_order_relaxed))
         {
-            cv_push.notify_all();
+            high_watermark_tripped.exchange(false, std::memory_order_relaxed);
+            std::print("Sistema estable :)");
         }
 
         return true;
@@ -110,7 +74,29 @@ namespace Core
     void LogQueue::GetMaxRamUsage(size_t usable_ram) noexcept
     {
         MaxCapacity = usable_ram * 1024 * 1024;
-        HighWatermark = (MaxCapacity * 8) / 10;
-        LowWatermark = (MaxCapacity * 2) / 10;
+    }
+
+    void LogQueue::wait(size_t current_head, LogEntry log_line) noexcept
+    {
+        switch (overflow)
+        {
+            case OverflowProfile::Block:
+                while (current_head == tail.load(std::memory_order_acquire))
+                {
+                    _mm_pause();
+                }
+                break;
+
+            case OverflowProfile::DropAll:
+                return;
+
+            case OverflowProfile::DropNonCritical:
+                if (log_line.level != LogLevel::Critical) return;
+                while (current_head == tail.load(std::memory_order_acquire))
+                {
+                    _mm_pause();
+                }
+                break;
+        }
     }
 } 

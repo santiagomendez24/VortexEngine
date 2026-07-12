@@ -1,4 +1,5 @@
 #include "../include/ThreadManager.h"
+#include "../../Core/include/LogQueue.h"
 #include <thread>
 #include <memory>
 #include <chrono>
@@ -68,13 +69,14 @@ namespace ThreadManager
 		return thread_calc;
 	}
 
-	void ThreadManager::start_threads(const LogClasses& log_classes) noexcept
+	void ThreadManager::start_threads(const LogClasses& log_classes, size_t usable_ram, Core::OverflowProfile profile) noexcept
 	{
-		Network::Time::update_time();
+		Network::Tools::Time::update_time();
 
-		auto local_telemetry = log_classes.telemetry;
-		auto local_logQueue = log_classes.logQueue;
-		auto local_logServer = log_classes.logServer;
+		classes = log_classes;
+		std::shared_ptr<Telemetry::Telemetry> local_telemetry = log_classes.telemetry;
+		std::shared_ptr<Core::LogQueue> local_logQueue = log_classes.logQueue;
+		std::shared_ptr<Network::LogServer> local_logServer = log_classes.logServer;
 
 		is_on.store(true, std::memory_order_relaxed);
 
@@ -97,12 +99,18 @@ namespace ThreadManager
 			if (consum_num == 0) consum_num = 1;
 		}
 
+		for (size_t i = 0; i < net_num; ++i)
+		{
+			owned_queues.push_back(std::make_unique<Core::LogQueue>(usable_ram, *local_telemetry, profile));
+			all_queues.push_back(owned_queues.back().get());
+		}
+
 		time_thread = std::thread([this]()
 		{
 			while (is_on.load(std::memory_order_relaxed))
 			{
-				Network::Time::update_time();
-				std::this_thread::sleep_for(std::chrono::seconds(2));
+				Network::Tools::Time::update_time();
+				std::this_thread::sleep_for(std::chrono::milliseconds(1));
 			}
 		});
 
@@ -111,27 +119,61 @@ namespace ThreadManager
 			while (is_on.load(std::memory_order_relaxed))
 			{
 				local_telemetry->update_telemetry();
-				std::this_thread::sleep_for(std::chrono::seconds(1));
+				std::this_thread::sleep_for(std::chrono::seconds(2));
 			}
 		});
 
 		local_logServer->start_accept();
 		for (size_t i = 0; i < net_num; ++i)
 		{
-			network_pool.emplace_back([local_logServer]()
+			Core::LogQueue* ptr = all_queues[i];
+
+			network_pool.emplace_back([local_logServer, ptr]()
 			{
-				local_logServer->start();
+				local_logServer->start(ptr);
 			});
+		}
+
+		bool registration_complete = false;
+		while (!registration_complete)
+		{
+			std::this_thread::sleep_for(std::chrono::milliseconds(10));
+			if (all_queues.size() >= net_num)
+			{
+				registration_complete = true;
+			}
 		}
 
 		for (size_t i = 0; i < consum_num; ++i)
 		{
-			consumer_pool.emplace_back([local_logQueue]()
+			Core::LogQueue* queue = all_queues[i];
+			consumer_pool.emplace_back([queue]()
 			{
 				Core::LogEntry out_entry;
-				while (local_logQueue->pop(out_entry))
+				bool KeepRunning = true;
+
+				while (KeepRunning)
 				{
-					//aqui lo saco
+					if (queue->pop(out_entry))
+					{
+						//Salir
+					}
+					else
+					{
+						if (!queue->func_is_running())
+						{
+							KeepRunning = false;
+						}
+						else
+						{
+							_mm_pause();
+						}
+					}
+				}
+
+				while (queue->pop(out_entry))
+				{
+					//Salir
 				}
 			});
 		}
@@ -140,7 +182,19 @@ namespace ThreadManager
 	void ThreadManager::stop_threads(LogClasses log_classes) noexcept
 	{
 		log_classes.logServer->stop();
-		log_classes.logQueue->set_finished();
+
+		for (auto* queue : all_queues)
+		{
+			if (queue)
+			{
+				queue->set_finished();
+			}
+		}
+
+		if (log_classes.logQueue)
+		{
+			log_classes.logQueue->set_finished();
+		}
 
 		is_on.store(false, std::memory_order_relaxed);
 
@@ -159,6 +213,8 @@ namespace ThreadManager
 				thread.join();
 			}
 		}
+		all_queues.clear();
+		owned_queues.clear();
 
 		if (time_thread.joinable())
 		{

@@ -11,9 +11,12 @@
 #include <cstdint>
 #include <atomic>
 #include <array>
+#include "../../Telemetry/include/Telemetry.h"
 
 namespace Core
 {
+    class LogQueue;
+
     enum class LogLevel : uint8_t
     {
         Debug,
@@ -34,13 +37,15 @@ namespace Core
     struct LogEntry
     {
         uint64_t timestamp;    
-        std::string raw_log;
         uint32_t log_id;
+        uint8_t message_lenght;
         LogLevel level;
+        bool is_continued;
+        std::array<char, 240> raw_log;
 
         [[nodiscard]] size_t GetMemory() const noexcept
         {
-            return sizeof(*this) + raw_log.capacity();
+            return sizeof(*this);
         }
     };
 
@@ -48,29 +53,50 @@ namespace Core
     {
     private:
 
-        std::queue<LogEntry> raw_queue;
-        std::mutex queue_mutex;
-        std::condition_variable cv_push;
-        std::condition_variable cv_pop;
-        bool is_running = true;
+        alignas(64) std::unique_ptr<LogEntry[]> log_array;
+        alignas(64) std::atomic<size_t> head{ 0 };
+        alignas(64) std::atomic<size_t> tail{ 0 };
+
+        std::atomic<bool> is_running = true;
 
         size_t MaxCapacity;
-        size_t HighWatermark;
-        size_t LowWatermark;
-        size_t current_queue_bytes{ 0 };
 
-        size_t waiting_threads{ 0 };
+        std::atomic<size_t> HighWatermark;
+        std::atomic<size_t> LowWatermark;
+
+        std::atomic<size_t> waiting_threads{ 0 };
+
+        size_t CapacityMask;
 
         void GetMaxRamUsage(size_t usable_ram) noexcept;
 
-        bool high_watermark_tripped{ false };
+        std::atomic<bool> high_watermark_tripped{ false };
         Telemetry::Telemetry& telemetry_;
 
         OverflowProfile overflow;
 
+        void wait(size_t current_head, LogEntry log_line) noexcept;
+
     public:
 
-        explicit LogQueue(size_t ram_usage, Telemetry::Telemetry& telemetry, OverflowProfile& over) noexcept : telemetry_(telemetry), overflow(over) { GetMaxRamUsage(ram_usage); }
+        explicit LogQueue(size_t ram_usage, Telemetry::Telemetry& telemetry, const OverflowProfile& over) noexcept : telemetry_(telemetry), overflow(over) 
+        { 
+            GetMaxRamUsage(ram_usage);
+            size_t raw_slots = MaxCapacity / sizeof(LogEntry);
+
+            if (raw_slots < 2)
+            {
+                std::cerr << "[ERROR] Memoria RAM insuficiente para inicializar el buffer.\n";
+                return;
+            }
+
+            size_t optimized_capacity = std::bit_floor(raw_slots);
+            CapacityMask = optimized_capacity - 1;
+            log_array = std::make_unique<LogEntry[]>(optimized_capacity);
+
+            HighWatermark.store((optimized_capacity * 8) / 10, std::memory_order_relaxed);
+            LowWatermark.store((optimized_capacity * 2) / 10, std::memory_order_relaxed);
+        }
         ~LogQueue() noexcept = default;
 
         explicit LogQueue(const LogQueue&) noexcept = delete;
@@ -78,7 +104,8 @@ namespace Core
 
         void push(LogEntry&& log_line);
         bool pop(LogEntry& out_log);
-        void set_finished();
+        void set_finished() noexcept;
+        inline bool func_is_running() noexcept { return is_running.load(std::memory_order_relaxed); }
     };
 
 } // namespace Core
