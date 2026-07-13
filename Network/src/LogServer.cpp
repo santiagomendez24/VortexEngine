@@ -10,7 +10,7 @@ namespace Network
 
 	void LogServer::start(Core::LogQueue* ptr)
 	{
-		transitory_ptr = ptr;
+		ptr_queue.push_back(ptr);
 		io_context_.run();
 	}
 
@@ -20,7 +20,9 @@ namespace Network
 		{
 			if (!ec)
 			{
-				std::make_shared<NetworkSession>(std::move(move_socket))->start(transitory_ptr);
+				size_t index = next_queue_index.fetch_add(1, std::memory_order_relaxed) & (ptr_queue.size() - 1);
+				Core::LogQueue* assigned_ptr = ptr_queue[index];
+				std::make_shared<NetworkSession>(std::move(move_socket))->start(assigned_ptr);
 			}
 			else
 			{
@@ -30,6 +32,7 @@ namespace Network
 			start_accept();
 		}));
 	}
+
 	NetworkSession::NetworkSession(asio::ip::tcp::socket socket) noexcept : socket_(std::move(socket)), CurrentParser(GetBestParser())
 	{ }
 
@@ -130,7 +133,9 @@ namespace Network
 
 			if (!CheckLogEntry::validate(log_entry)) return;
 
-			session->assigned_ptr->push(std::move(log_entry));
+			size_t index = session->next_queue_index.fetch_add(1, std::memory_order_relaxed) & (session->assigned_ptr.size() - 1);
+			Core::LogQueue* assigned_ptr = session->assigned_ptr[index];
+			assigned_ptr->push(std::move(log_entry));
 		}
 	}
 
@@ -222,13 +227,15 @@ namespace Network
 
 			if (!CheckLogEntry::validate(log_entry)) return;
 
-			session->assigned_ptr->push(std::move(log_entry));
+			size_t index = session->next_queue_index.fetch_add(1, std::memory_order_relaxed) & (session->assigned_ptr.size() - 1);
+			Core::LogQueue* assigned_ptr = session->assigned_ptr[index];
+			assigned_ptr->push(std::move(log_entry));
 		}
 	}
 
 	inline void NetworkSession::handle_error(const asio::error_code& ec)
 	{
-		std::print("{}", ec.message());
+		std::print("{}\n", ec.message());
 		socket_.close();
 	}
 }

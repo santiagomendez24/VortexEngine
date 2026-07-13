@@ -75,7 +75,6 @@ namespace ThreadManager
 
 		classes = log_classes;
 		std::shared_ptr<Telemetry::Telemetry> local_telemetry = log_classes.telemetry;
-		std::shared_ptr<Core::LogQueue> local_logQueue = log_classes.logQueue;
 		std::shared_ptr<Network::LogServer> local_logServer = log_classes.logServer;
 
 		is_on.store(true, std::memory_order_relaxed);
@@ -189,11 +188,6 @@ namespace ThreadManager
 			{
 				queue->set_finished();
 			}
-		}
-
-		if (log_classes.logQueue)
-		{
-			log_classes.logQueue->set_finished();
 		}
 
 		is_on.store(false, std::memory_order_relaxed);

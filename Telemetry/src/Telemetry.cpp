@@ -9,7 +9,7 @@ namespace Telemetry
 		uint64_t pushed = pushed_logs.load(std::memory_order_relaxed);
 		uint64_t eliminated = eliminated_logs.load(std::memory_order_relaxed);
 
-		std::print("Pushed: {}, Popped: {}", pushed, eliminated);
+		std::print("Pushed: {}, Popped: {} \n", pushed, eliminated);
 
 		GetVelocity(pushed, eliminated);
 	}
@@ -32,7 +32,7 @@ namespace Telemetry
 		double push_per_sec = static_cast<double>(delta_push) / 2.0;
 		double pop_per_sec = static_cast<double>(delta_popped) / 2.0;
 
-		std::print("Push por segundo: {} logs/s, Pop por segundo: {} logs/s", push_per_sec, pop_per_sec);
+		std::print("Push por segundo: {} logs/s, Pop por segundo: {} logs/s \n", push_per_sec, pop_per_sec);
 		
 		last_pushed = pushed;
 		last_popped = popped;

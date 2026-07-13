@@ -32,7 +32,7 @@ namespace Core
         if (occupied_slots >= HighWatermark.load(std::memory_order_relaxed))
         {
             high_watermark_tripped.exchange(true, std::memory_order_relaxed);
-            std::print("Mas del 80% usado de {}, uso {}", MaxCapacity, HighWatermark.load());
+            std::print("Mas del 80% usado de {}, uso {} \n", MaxCapacity, HighWatermark.load());
         }
     }
 
@@ -65,7 +65,7 @@ namespace Core
         if (freed_slots <= LowWatermark.load(std::memory_order_relaxed))
         {
             high_watermark_tripped.exchange(false, std::memory_order_relaxed);
-            std::print("Sistema estable :)");
+            std::print("Sistema estable :) \n");
         }
 
         return true;

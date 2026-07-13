@@ -73,15 +73,16 @@ namespace Network
         asio::ip::tcp::socket socket_;
 
         uint32_t body_length_buffer_ = 0;
-        alignas(32) std::array<char, 1024 * 64> read_buffer_;
+        alignas(32) std::array<char, (10 * 1024 * 1024) + 1024> read_buffer_;
 
-        Core::LogQueue* assigned_ptr;
+        std::vector<Core::LogQueue*> assigned_ptr;
+        std::atomic<size_t> next_queue_index{ 0 };
 
     public:
 
         explicit NetworkSession(asio::ip::tcp::socket socket) noexcept;
         ~NetworkSession() noexcept {}
-        void start(Core::LogQueue* ptr) noexcept { this->assigned_ptr = ptr; read_header(); }
+        void start(Core::LogQueue* ptr) noexcept { this->assigned_ptr.push_back(ptr); read_header(); }
 
     private:
 
@@ -122,7 +123,8 @@ namespace Network
     {
     private:
 
-        Core::LogQueue* transitory_ptr;
+        std::vector<Core::LogQueue*> ptr_queue;
+        std::atomic<size_t> next_queue_index{ 0 };
 
         asio::io_context io_context_;
         asio::ip::tcp::acceptor acceptor_;

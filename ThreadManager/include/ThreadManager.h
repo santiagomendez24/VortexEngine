@@ -27,7 +27,6 @@ namespace ThreadManager
 	struct LogClasses
 	{
 		std::shared_ptr<Telemetry::Telemetry> telemetry;
-		std::shared_ptr<Core::LogQueue> logQueue;
 		std::shared_ptr<Network::LogServer> logServer;
 	};
 
@@ -56,7 +55,7 @@ namespace ThreadManager
 
 	public:
 
-		ThreadManager(ThreadConfig user_config) noexcept : config(user_config) 
+		ThreadManager(ThreadConfig user_config, std::shared_ptr<Telemetry::Telemetry> telemetry, size_t usable_ram, Core::OverflowProfile profile, std::shared_ptr<Network::LogServer> LogServer) noexcept : config(user_config) 
 		{ 
 			size_t calc = CalculateThreads(config);
 			if (calc == 0)
@@ -71,6 +70,23 @@ namespace ThreadManager
 			{
 				config.threads_num = calc;
 			}
+
+			if (usable_ram < 20)
+			{
+				std::cerr << "[VORTEX ENGINE - WARN] Configuración de RAM invalida ("
+					<< usable_ram << "). No puede ser menor a 20MB, colocando 30MB por seguridad"
+					<< std::endl;
+				usable_ram = 30;
+			}
+
+			LogClasses log_classes;
+			log_classes.logServer = LogServer;
+			log_classes.telemetry = telemetry;
+
+			size_t thread_usable_ram = usable_ram - 15;
+			size_t thread_ram = thread_usable_ram / config.threads_num;
+
+			start_threads(log_classes, thread_ram, profile);
 		}
 
 		~ThreadManager() noexcept { stop_threads(classes); }
