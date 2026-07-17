@@ -6,11 +6,15 @@
 #include <thread>
 #include <chrono>
 #include <string_view>
+#include <print>
 #include <array>
 #include <charconv>
 #include <algorithm>
 #include <winsock2.h>
+#include <Windows.h>
 #include "../time/include/Time.h"
+
+#pragma comment(lib, "onecore.lib")
 
 namespace Network
 {
@@ -66,28 +70,227 @@ namespace Network
         }
     };
 
+#pragma pack(push, 1)
+    template<size_t slab_size>
+    struct Slab
+    {
+        std::array<char, slab_size * 1024 * 1024> data;
+        uint8_t tail_byte;
+    };
+#pragma pack(pop)
+
+    template<size_t max_slabs, size_t slab_size>
+    class SlabPool
+    {
+    private:
+
+        std::array<Slab<slab_size>, max_slabs> slab_pool;
+        size_t write_index = 0;
+        size_t current_offset = 0;
+
+    public:
+
+        Slab<slab_size>* get_next_slab(std::string_view message, uint32_t& out_offset)
+        {
+            size_t msg_size = message.size();
+
+            if (msg_size > (slab_size * 1024 * 1024)) return nullptr;
+
+            if (current_offset + msg_size > (slab_size * 1024 * 1024))
+            {
+                write_index = (write_index + 1) & (max_slabs - 1);
+                current_offset = 0;
+                slab_pool[write_index].tail_byte = 0x00;
+            }
+
+            out_offset = static_cast<uint32_t>(current_offset);
+            current_offset += msg_size;
+
+            return &slab_pool[write_index];
+        }
+    };
+
+    class MagicRingBuffer
+    {
+    private:         
+
+        HANDLE hMapFile;
+        void* viewA;
+        void* viewB;
+
+        uint8_t* base_ptr;    // Puntero base virtual contiguo de tamaño size * 2
+        size_t size;
+        size_t head;          // Índice de escritura (acumulativo)
+        size_t tail;
+        
+    public:
+
+        explicit MagicRingBuffer(size_t physical_size)
+            : size(physical_size), base_ptr(nullptr), hMapFile(NULL),
+            viewA(nullptr), viewB(nullptr), head(0), tail(0)
+        {
+            if (size == 0 || (size % (64 * 1024)) != 0)
+            {
+                throw std::invalid_argument("El tamaño del buffer debe ser múltiplo de 64 KB.");
+            }
+
+            start_portal();
+        }
+
+        ~MagicRingBuffer()
+        {
+            free_portal();
+        }
+
+        MagicRingBuffer(const MagicRingBuffer&) = delete;
+        MagicRingBuffer& operator=(const MagicRingBuffer&) = delete;
+
+        MagicRingBuffer(MagicRingBuffer&& other) noexcept
+            : size(other.size), base_ptr(other.base_ptr), hMapFile(other.hMapFile),
+            viewA(other.viewA), viewB(other.viewB), head(other.head), tail(other.tail)
+        {
+            other.base_ptr = nullptr;
+            other.hMapFile = NULL;
+            other.viewA = nullptr;
+            other.viewB = nullptr;
+            other.head = 0;
+            other.tail = 0;
+        }
+
+        // API de control de bytes
+        uint8_t* get_write_ptr() const noexcept
+        {
+            return base_ptr + (head & (size - 1));
+        }
+
+        size_t get_write_space() const noexcept
+        {
+            return size - (head - tail);
+        }
+
+        size_t get_bytes_available() const noexcept
+        {
+            return head - tail;
+        }
+
+        void commit_write(size_t bytes_written) noexcept
+        {
+            head += bytes_written;
+        }
+
+        void consume(size_t bytes_consumed) noexcept
+        {
+            tail += bytes_consumed;
+        }
+
+        std::string_view get_view(size_t len) const noexcept
+        {
+            return std::string_view(reinterpret_cast<const char*>(base_ptr + (tail & (size - 1))), len);
+        }
+
+        void reset() noexcept
+        {
+            head = 0;
+            tail = 0;
+        }
+
+        uint32_t peek(uint32_t usize = 0) noexcept
+        {
+            return *reinterpret_cast<const uint32_t*>(base_ptr + ((tail + usize) & (this->size - 1)));
+        }
+
+    private:
+        void start_portal()
+        {
+            base_ptr = reinterpret_cast<uint8_t*>(VirtualAlloc2(GetCurrentProcess(), nullptr, size * 2, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS, nullptr, 0));
+
+            if (!base_ptr)
+            {
+                throw std::runtime_error("No se pudo reservar el direccionamiento virtual contiguo.");
+            }
+
+            if (!VirtualFreeEx(GetCurrentProcess(), base_ptr, size, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER))
+            {
+                VirtualFreeEx(GetCurrentProcess(), base_ptr, 0, MEM_RELEASE);
+                throw std::runtime_error("Fallo crítico: No se pudo subdividir la región de memoria virtual.");
+            }
+
+            hMapFile = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, static_cast<DWORD>(size), nullptr);
+
+            if (!hMapFile)
+            {
+                throw std::runtime_error("Fallo al crear File Mapping de la sección física.");
+            }
+
+            viewA = MapViewOfFile3(hMapFile, GetCurrentProcess(), base_ptr, 0, size, MEM_REPLACE_PLACEHOLDER, PAGE_READWRITE, nullptr, 0);
+
+            if (!viewA)
+            {
+                CloseHandle(hMapFile);
+                throw std::runtime_error("Fallo al mapear la Región Espejo A.");
+            }
+
+            viewB = MapViewOfFile3(hMapFile, GetCurrentProcess(), base_ptr + size, 0, size, MEM_REPLACE_PLACEHOLDER, PAGE_READWRITE, nullptr, 0);
+
+            if (!viewB)
+            {
+                UnmapViewOfFile2(GetCurrentProcess(), viewA, 0);
+                CloseHandle(hMapFile);
+                throw std::runtime_error("Fallo al mapear la Región Espejo B.");
+            }
+        }
+
+        void free_portal() noexcept
+        {
+            if (viewB) UnmapViewOfFile2(GetCurrentProcess(), viewB, 0);
+            if (viewA) UnmapViewOfFile2(GetCurrentProcess(), viewA, 0);
+            if (hMapFile) CloseHandle(hMapFile);
+        }
+    };
+
     class NetworkSession : public std::enable_shared_from_this<NetworkSession>
     {
     private:
 
         asio::ip::tcp::socket socket_;
 
-        uint32_t body_length_buffer_ = 0;
-        alignas(32) std::array<char, (10 * 1024 * 1024) + 1024> read_buffer_;
+        std::unique_ptr<MagicRingBuffer> stash_buffer;
+        size_t max_log_size;
 
-        std::vector<Core::LogQueue*> assigned_ptr;
+        Core::LogQueue* assigned_ptr;
         std::atomic<size_t> next_queue_index{ 0 };
+        std::atomic<bool> is_closing{ false };
+
+        void disconnect(const std::string& reason)
+        {
+            bool esperado = false;
+            if (!is_closing.compare_exchange_strong(esperado, true))
+            {
+                return;
+            }
+
+            std::cerr << "[VORTEX] Disconnecting session: " << reason << std::endl;
+
+            asio::post(socket_.get_executor(), [self = shared_from_this()]()
+            {
+                asio::error_code ec;
+                self->socket_.cancel(ec);
+                self->socket_.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
+                self->socket_.close(ec);
+            });
+        }
 
     public:
 
-        explicit NetworkSession(asio::ip::tcp::socket socket) noexcept;
+        explicit NetworkSession(asio::ip::tcp::socket socket, size_t max_size, Core::LogQueue* ptr) noexcept;
         ~NetworkSession() noexcept {}
-        void start(Core::LogQueue* ptr) noexcept { this->assigned_ptr.push_back(ptr); read_header(); }
+        void start() noexcept { read_header(); }
+        [[nodiscard]] Core::LogQueue* get_private_queue() const noexcept { return assigned_ptr; }
 
     private:
 
         void read_header();
-        void read_body(uint32_t length);
+        void process_stash();
 
         static void parse_and_push(std::string_view raw_data, Network::NetworkSession* session);
         static void parse_and_push_simd(std::string_view raw_data, Network::NetworkSession* session);
@@ -123,13 +326,18 @@ namespace Network
     {
     private:
 
+        std::vector<std::thread> network_pool;
         std::vector<Core::LogQueue*> ptr_queue;
         std::atomic<size_t> next_queue_index{ 0 };
+        std::atomic<size_t> next_context{ 0 };
+        std::atomic<size_t> next_worker_index{ 0 };
 
         asio::io_context io_context_;
+        std::vector<std::unique_ptr<asio::io_context>> context_vec;
         asio::ip::tcp::acceptor acceptor_;
 
         asio::executor_work_guard<asio::io_context::executor_type> work_guard_;
+        std::vector<asio::executor_work_guard<asio::io_context::executor_type>> work_guard_vec;
         asio::strand<asio::io_context::executor_type> accept_strand_;
 
     public:
@@ -140,8 +348,29 @@ namespace Network
         LogServer(const LogServer&) = delete;
         LogServer& operator=(const LogServer&) = delete;
 
-        void start(Core::LogQueue* ptr);
-        void stop() noexcept { work_guard_.reset();  io_context_.stop(); }
+        void start(const std::vector<Core::LogQueue*>& ptr);
+
+        void stop() noexcept
+        {
+            asio::error_code ec;
+            acceptor_.close(ec);
+            work_guard_.reset();
+            io_context_.stop();
+
+            for (auto& guard : work_guard_vec)
+            {
+                guard.reset();
+            }
+
+            for (auto& th : network_pool)
+            {
+                if (th.joinable())
+                {
+                    th.join();
+                }
+            }
+        }
+
         void start_accept();
     };
 }

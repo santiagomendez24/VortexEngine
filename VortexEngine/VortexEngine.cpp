@@ -17,15 +17,15 @@
 #include "../ThreadManager/src/ThreadManager.cpp"
 
 //Edit this if you want to change the amount of RAM that log queue is gonna use
-constexpr static size_t usable_ram = 30; // In MB
+constexpr static size_t usable_ram = 128; // In MB
 
 int main()
 {
-	Core::OverflowProfile profile = Core::OverflowProfile::Block;
+	Core::OverflowProfile profile = Core::OverflowProfile::DropAll;
 	std::shared_ptr<Telemetry::Telemetry> telemetry = std::make_shared<Telemetry::Telemetry>();
 	std::shared_ptr<Network::LogServer> LogServer = std::make_shared<Network::LogServer>(8080);
 
-	ThreadManager::ThreadManager thread_manager({ThreadManager::ThreadProfile::TotalManual, 6, 2, 2}, telemetry, usable_ram, profile, LogServer);
+	ThreadManager::ThreadManager thread_manager({ThreadManager::ThreadProfile::TotalManual, 4, 1, 1}, telemetry, usable_ram, profile, LogServer);
 
 	std::print("Enter para frenar\n");
 	std::cin.get();

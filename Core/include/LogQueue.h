@@ -13,6 +13,11 @@
 #include <array>
 #include "../../Telemetry/include/Telemetry.h"
 
+namespace Network
+{
+    template<size_t max_slabs, size_t slab_size> class SlabPool;
+}
+
 namespace Core
 {
     class LogQueue;
@@ -34,20 +39,23 @@ namespace Core
         Spillover
     };
 
+#pragma pack(push, 1)
     struct LogEntry
     {
         uint64_t timestamp;    
         uint32_t log_id;
-        uint8_t message_lenght;
+        uint32_t message_lenght;
+        uint32_t message_offset;
         LogLevel level;
-        bool is_continued;
-        std::array<char, 240> raw_log;
+
+        uintptr_t slab_ptr;
 
         [[nodiscard]] size_t GetMemory() const noexcept
         {
             return sizeof(*this);
         }
     };
+#pragma pack(pop)
 
     class LogQueue
     {
@@ -75,11 +83,12 @@ namespace Core
 
         OverflowProfile overflow;
 
-        void wait(size_t current_head, LogEntry log_line) noexcept;
-
     public:
 
-        explicit LogQueue(size_t ram_usage, Telemetry::Telemetry& telemetry, const OverflowProfile& over) noexcept : telemetry_(telemetry), overflow(over) 
+        std::unique_ptr<Network::SlabPool<10, 10>> slab_pool;
+
+        explicit LogQueue(size_t ram_usage, Telemetry::Telemetry& telemetry, const OverflowProfile& over) noexcept : telemetry_(telemetry), overflow(over), 
+            slab_pool(std::make_unique<Network::SlabPool<10, 10>>())
         { 
             GetMaxRamUsage(ram_usage);
             size_t raw_slots = MaxCapacity / sizeof(LogEntry);
@@ -90,7 +99,7 @@ namespace Core
                 return;
             }
 
-            size_t optimized_capacity = std::bit_floor(raw_slots);
+            size_t optimized_capacity = std::bit_ceil(raw_slots);
             CapacityMask = optimized_capacity - 1;
             log_array = std::make_unique<LogEntry[]>(optimized_capacity);
 

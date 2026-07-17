@@ -1,4 +1,5 @@
 #include "../include/LogQueue.h"
+#include "../../Network/include/LogServer.h"
 #include <utility>
 #include <memory>
 #include <immintrin.h>
@@ -16,7 +17,26 @@ namespace Core
 
         if (next_head == tail.load(std::memory_order_acquire))
         {
-            wait(next_head, log_line);
+            switch (overflow)
+            {
+                case OverflowProfile::Block:
+                    while (current_head == tail.load(std::memory_order_acquire))
+                    {
+                        _mm_pause();
+                    }
+                    break;
+
+                case OverflowProfile::DropAll:
+                    return;
+
+                case OverflowProfile::DropNonCritical:
+                    if (log_line.level != LogLevel::Critical) return;
+                    while (current_head == tail.load(std::memory_order_acquire))
+                    {
+                        _mm_pause();
+                    }
+                    break;
+            }
         }
 
         if (!is_running) return;
@@ -27,12 +47,16 @@ namespace Core
 
         telemetry_.RegisterPushed();
 
-        size_t occupied_slots = (next_head - tail.load(std::memory_order_acquire)) & CapacityMask;
+        size_t occupied_slots = (next_head - tail.load(std::memory_order_acquire)) & CapacityMask; 
 
         if (occupied_slots >= HighWatermark.load(std::memory_order_relaxed))
         {
             high_watermark_tripped.exchange(true, std::memory_order_relaxed);
-            std::print("Mas del 80% usado de {}, uso {} \n", MaxCapacity, HighWatermark.load());
+
+            size_t total_slots = CapacityMask + 1;
+            size_t percentage = (occupied_slots * 100) / total_slots;
+
+            //std::print("[VORTEX] Alerta: Cola al {}% de capacidad. Slots ocupados: {} de {}\n", percentage, occupied_slots, total_slots);
         }
     }
 
@@ -60,12 +84,16 @@ namespace Core
 
         telemetry_.RegisterEliminated();
 
-        size_t freed_slots = (current_tail - (head.load(std::memory_order_acquire))) & CapacityMask;
+        size_t total_slots = CapacityMask + 1;
+        size_t occupied_slots = (head.load(std::memory_order_acquire) - current_tail) & CapacityMask;
+        size_t freed_slots = total_slots - occupied_slots;
 
         if (freed_slots <= LowWatermark.load(std::memory_order_relaxed))
         {
-            high_watermark_tripped.exchange(false, std::memory_order_relaxed);
-            std::print("Sistema estable :) \n");
+            if (high_watermark_tripped.exchange(false, std::memory_order_relaxed))
+            {
+                //std::print("[VORTEX] Sistema estabilizado de nuevo. Slots libres: {}\n", freed_slots);
+            }
         }
 
         return true;
@@ -74,29 +102,5 @@ namespace Core
     void LogQueue::GetMaxRamUsage(size_t usable_ram) noexcept
     {
         MaxCapacity = usable_ram * 1024 * 1024;
-    }
-
-    void LogQueue::wait(size_t current_head, LogEntry log_line) noexcept
-    {
-        switch (overflow)
-        {
-            case OverflowProfile::Block:
-                while (current_head == tail.load(std::memory_order_acquire))
-                {
-                    _mm_pause();
-                }
-                break;
-
-            case OverflowProfile::DropAll:
-                return;
-
-            case OverflowProfile::DropNonCritical:
-                if (log_line.level != LogLevel::Critical) return;
-                while (current_head == tail.load(std::memory_order_acquire))
-                {
-                    _mm_pause();
-                }
-                break;
-        }
     }
 } 

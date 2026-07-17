@@ -122,27 +122,6 @@ namespace ThreadManager
 			}
 		});
 
-		local_logServer->start_accept();
-		for (size_t i = 0; i < net_num; ++i)
-		{
-			Core::LogQueue* ptr = all_queues[i];
-
-			network_pool.emplace_back([local_logServer, ptr]()
-			{
-				local_logServer->start(ptr);
-			});
-		}
-
-		bool registration_complete = false;
-		while (!registration_complete)
-		{
-			std::this_thread::sleep_for(std::chrono::milliseconds(10));
-			if (all_queues.size() >= net_num)
-			{
-				registration_complete = true;
-			}
-		}
-
 		for (size_t i = 0; i < consum_num; ++i)
 		{
 			Core::LogQueue* queue = all_queues[i];
@@ -176,6 +155,8 @@ namespace ThreadManager
 				}
 			});
 		}
+
+		local_logServer->start(all_queues);
 	}
 
 	void ThreadManager::stop_threads(LogClasses log_classes) noexcept
@@ -191,14 +172,6 @@ namespace ThreadManager
 		}
 
 		is_on.store(false, std::memory_order_relaxed);
-
-		for (auto& thread : network_pool)
-		{
-			if (thread.joinable())
-			{
-				thread.join();
-			}
-		}
 
 		for (auto& thread : consumer_pool)
 		{
