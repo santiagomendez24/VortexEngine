@@ -39,6 +39,27 @@ namespace Network
 		io_context_.run();
 	}
 
+	void LogServer::stop() noexcept
+	{
+		asio::error_code ec;
+		acceptor_.close(ec);
+		work_guard_.reset();
+		io_context_.stop();
+
+		for (auto& guard : work_guard_vec)
+		{
+			guard.reset();
+		}
+
+		for (auto& th : network_pool)
+		{
+			if (th.joinable())
+			{
+				th.join();
+			}
+		}
+	}
+
 	void LogServer::start_accept()
 	{
 		size_t worker_index = next_worker_index++ % context_vec.size();
@@ -117,7 +138,7 @@ namespace Network
 
 				uint32_t log_len = ntohl(stash_buffer->peek(4));
 
-				if (log_len > max_log_size)
+				if (log_len == 0 || log_len > max_log_size)
 				{
 					disconnect("El paquete se pasa del tamaño establecido");
 					return;
@@ -161,33 +182,37 @@ namespace Network
 
 	void NetworkSession::parse_and_push(std::string_view raw_data, Network::NetworkSession* session)
 	{
-		auto part_1 = raw_data.find(' ');
-		if (part_1 == std::string_view::npos) return;
+		const char* ptr = raw_data.data();
+		const char* end = ptr + raw_data.size();
 
-		std::string_view time_view = raw_data.substr(0, part_1);
 		uint64_t time = 0;
+		while (ptr < end && *ptr >= '0' && *ptr <= '9')
+		{
+			time = time * 10 + (*ptr++ - '0');
+		}
 
-		auto [ptr1, ec1] = std::from_chars(time_view.data(), time_view.data() + time_view.size(), time);
-		if (!CheckLogEntry::validate_fromcharts(ec1)) return;
+		if (ptr >= end || *ptr++ != ' ') return session->disconnect("Malformed Time");
+		if (!CheckLogEntry::validateTimestamp(time)) return session->disconnect("Invalid Time");
 
-		auto part_2 = raw_data.find(' ', part_1 + 1);
-		if (part_2 == std::string_view::npos) return;
-
-		std::string_view level_view = raw_data.substr(part_1 + 1, part_2 - part_1 - 1);
 		size_t level = 0;
-		auto [ptr2, ec2] = std::from_chars(level_view.data(), level_view.data() + level_view.size(), level);
-		if (!CheckLogEntry::validate_fromcharts(ec2)) return;
-		Core::LogLevel log_level = static_cast<Core::LogLevel>(level);
+		while (ptr < end && *ptr >= '0' && *ptr <= '9')
+		{
+			level = level * 10 + (*ptr++ - '0');
+		}
 
-		auto part_3 = raw_data.find(' ', part_2 + 1);
-		if (part_3 == std::string_view::npos) return;
+		if (ptr >= end || *ptr++ != ' ') return session->disconnect("Malformed Level");
+		if (!CheckLogEntry::validate_level(level)) return session->disconnect("Invalid level");
 
-		std::string_view id_view = raw_data.substr(part_2 + 1, part_3 - part_2 - 1);
 		uint32_t id = 0;
-		auto [ptr3, ec3] = std::from_chars(id_view.data(), id_view.data() + id_view.size(), id);
-		if (!CheckLogEntry::validate_fromcharts(ec3)) return;
+		while (ptr < end && *ptr >= '0' && *ptr <= '9')
+		{
+			id = id * 10 + (*ptr++ - '0');
+		}
 
-		std::string_view message = raw_data.substr(part_3 + 1);
+		if (ptr >= end || *ptr++ != ' ') return session->disconnect("Malformed ID");
+		if (!CheckLogEntry::validateID(id)) return session->disconnect("Invalid ID");
+
+		std::string_view message(ptr, end - ptr);
 
 		Core::LogQueue* assigned_ptr = session->get_private_queue();
 
@@ -198,7 +223,7 @@ namespace Network
 		std::memcpy(slab->data.data() + slab_offset, message.data(), message.size());
 
 		Core::LogEntry log_entry;
-		log_entry.level = log_level;
+		log_entry.level = static_cast<Core::LogLevel>(level);
 		log_entry.log_id = id;
 		log_entry.message_offset = slab_offset;
 		log_entry.timestamp = time;
@@ -210,55 +235,51 @@ namespace Network
 
 	void NetworkSession::parse_and_push_simd(std::string_view raw_data, Network::NetworkSession* session)
 	{
-		if (raw_data.size() < 32)
+		const char* data = raw_data.data();
+		const char* end = data + raw_data.size();
+
+		auto fast_parse = [](const char*& ptr, const char* end_ptr) noexcept -> uint64_t
 		{
-			parse_and_push(raw_data, session);
-			return;
+			uint64_t val = 0;
+			while (ptr < end_ptr && *ptr >= '0' && *ptr <= '9')
+			{
+				val = (val * 10) + (*ptr++ - '0');
+			}
+			return val;
+		};
+
+		if (raw_data.size() < 32 || ((reinterpret_cast<uintptr_t>(data) & 0xFFF) + 32 > 4096))
+		{
+			return parse_and_push(raw_data, session);
 		}
 
-		uintptr_t address = reinterpret_cast<uintptr_t>(raw_data.data());
-		uintptr_t page_offset = address & 0xFFF;
-		if (page_offset + 32 > 4096)
+		__m256i header = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(data));
+		uint32_t mask = _mm256_movemask_epi8(_mm256_cmpeq_epi8(header, _mm256_set1_epi8(' ')));
+
+		if (__builtin_popcount(mask) < 3)
 		{
-			parse_and_push(raw_data, session);
-			return;
+			return parse_and_push(raw_data, session);
 		}
 
-		__m256i header_block = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(raw_data.data()));
+		uint32_t p1 = _tzcnt_u32(mask);
+		uint32_t p2 = _tzcnt_u32(mask & (mask - 1));
+		uint32_t p3 = _tzcnt_u32(mask & (mask - 1) & (mask - 2));
 
-		__m256i spaces = _mm256_set1_epi8(' ');
-		__m256i comparition = _mm256_cmpeq_epi8(header_block, spaces);
-		uint32_t mask = _mm256_movemask_epi8(comparition);
+		const char* ptr = data;
 
-		uint32_t first_space_index = _tzcnt_u32(mask);
-		uint32_t mask_without_first = mask & (mask - 1);
-		uint32_t second_space_index = _tzcnt_u32(mask_without_first);
-		uint32_t mask_without_second = mask_without_first & (mask_without_first - 1);
-		uint32_t third_space_index = _tzcnt_u32(mask_without_second);
+		uint64_t time = fast_parse(ptr, data + p1);
+		ptr = data + p1 + 1;
+		if (!CheckLogEntry::validateTimestamp(time)) return session->disconnect("Invalid Time");
 
-		if ((mask_without_second == 0) || (third_space_index >= 32))
-		{
-			parse_and_push(raw_data, session);
-			return;
-		}
+		size_t level = fast_parse(ptr, data + p2);
+		ptr = data + p2 + 1;
+		if (!CheckLogEntry::validate_level(level)) return session->disconnect("Invalid Level");
 
-		std::string_view time_view = raw_data.substr(0, first_space_index);
-		uint64_t time = 0;
-		auto [ptr1, ec1] = std::from_chars(time_view.data(), time_view.data() + time_view.size(), time);
-		if (!CheckLogEntry::validate_fromcharts(ec1)) return;
+		uint32_t id = static_cast<uint32_t>(fast_parse(ptr, data + p3));
+		ptr = data + p3 + 1;
+		if (!CheckLogEntry::validateID(id)) return session->disconnect("Invalid ID");
 
-		std::string_view level_view = raw_data.substr(first_space_index + 1, second_space_index - first_space_index - 1);
-		size_t level = 0;
-		auto [ptr2, ec2] = std::from_chars(level_view.data(), level_view.data() + level_view.size(), level);
-		if (!CheckLogEntry::validate_fromcharts(ec2)) return;
-		Core::LogLevel log_level = static_cast<Core::LogLevel>(level);
-
-		std::string_view id_view = raw_data.substr(second_space_index + 1, third_space_index - second_space_index - 1);
-		uint32_t id = 0;
-		auto [ptr3, ec3] = std::from_chars(id_view.data(), id_view.data() + id_view.size(), id);
-		if (!CheckLogEntry::validate_fromcharts(ec3)) return;
-
-		std::string_view message = raw_data.substr(third_space_index + 1);
+		std::string_view message(ptr, end - ptr);
 
 		Core::LogQueue* assigned_ptr = session->get_private_queue();
 
@@ -269,7 +290,7 @@ namespace Network
 		std::memcpy(slab->data.data() + slab_offset, message.data(), message.size());
 
 		Core::LogEntry log_entry;
-		log_entry.level = log_level;
+		log_entry.level = static_cast<Core::LogLevel>(level);
 		log_entry.log_id = id;
 		log_entry.message_offset = slab_offset;
 		log_entry.timestamp = time;
@@ -292,8 +313,148 @@ namespace Network
 
 		asio::post(socket_.get_executor(), [self = shared_from_this()]()
 		{
-			asio::error_code error_ignorado;
-			self->socket_.close(error_ignorado);
+			asio::error_code ignored_error;
+			self->socket_.close(ignored_error);
 		});
 	}
+
+	void NetworkSession::disconnect(const std::string& reason)
+	{
+		bool esperado = false;
+		if (!is_closing.compare_exchange_strong(esperado, true))
+		{
+			return;
+		}
+
+		std::cerr << "[VORTEX] Disconnecting session: " << reason << std::endl;
+
+		asio::post(socket_.get_executor(), [self = shared_from_this()]()
+		{
+			asio::error_code ec;
+			self->socket_.cancel(ec);
+			self->socket_.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
+			self->socket_.close(ec);
+		});
+	}
+
+	inline uint32_t NetworkSession::count_trailing_zeros(uint32_t mask)
+	{
+		unsigned long index;
+		if (_BitScanForward(&index, mask))
+		{
+			return static_cast<uint32_t>(index);
+		}
+		return 0;
+	}
+	
+	MagicRingBuffer::MagicRingBuffer(size_t physical_size) : size(physical_size), base_ptr(nullptr), hMapFile(NULL),
+		viewA(nullptr), viewB(nullptr), head(0), tail(0)
+	{
+		if (size == 0 || (size % (64 * 1024)) != 0)
+		{
+			throw std::invalid_argument("El tamaño del buffer debe ser múltiplo de 64 KB.");
+		}
+
+		start_portal();
+	}
+
+	MagicRingBuffer::MagicRingBuffer(MagicRingBuffer&& other) noexcept : size(other.size), base_ptr(other.base_ptr), hMapFile(other.hMapFile),
+		viewA(other.viewA), viewB(other.viewB), head(other.head), tail(other.tail)
+	{
+		other.base_ptr = nullptr;
+		other.hMapFile = NULL;
+		other.viewA = nullptr;
+		other.viewB = nullptr;
+		other.head = 0;
+		other.tail = 0;
+	}
+
+	uint8_t* MagicRingBuffer::get_write_ptr() const noexcept
+	{
+		return base_ptr + (head & (size - 1));
+	}
+
+	size_t MagicRingBuffer::get_write_space() const noexcept
+	{
+		return size - (head - tail);
+	}
+
+	size_t MagicRingBuffer::get_bytes_available() const noexcept
+	{
+		return head - tail;
+	}
+
+	void MagicRingBuffer::commit_write(size_t bytes_written) noexcept
+	{
+		head += bytes_written;
+	}
+
+	void MagicRingBuffer::consume(size_t bytes_consumed) noexcept
+	{
+		tail += bytes_consumed;
+	}
+
+	std::string_view MagicRingBuffer::get_view(size_t len) const noexcept
+	{
+		return std::string_view(reinterpret_cast<const char*>(base_ptr + (tail & (size - 1))), len);
+	}
+
+	void MagicRingBuffer::reset() noexcept
+	{
+		head = 0;
+		tail = 0;
+	}
+
+	uint32_t MagicRingBuffer::peek(uint32_t usize) noexcept
+	{
+		return *reinterpret_cast<const uint32_t*>(base_ptr + ((tail + usize) & (this->size - 1)));
+	}
+
+	void MagicRingBuffer::start_portal()
+	{
+		base_ptr = reinterpret_cast<uint8_t*>(VirtualAlloc2(GetCurrentProcess(), nullptr, size * 2, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS, nullptr, 0));
+
+		if (!base_ptr)
+		{
+			throw std::runtime_error("No se pudo reservar el direccionamiento virtual contiguo.");
+		}
+
+		if (!VirtualFreeEx(GetCurrentProcess(), base_ptr, size, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER))
+		{
+			VirtualFreeEx(GetCurrentProcess(), base_ptr, 0, MEM_RELEASE);
+			throw std::runtime_error("Fallo crítico: No se pudo subdividir la región de memoria virtual.");
+		}
+
+		hMapFile = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, static_cast<DWORD>(size), nullptr);
+
+		if (!hMapFile)
+		{
+			throw std::runtime_error("Fallo al crear File Mapping de la sección física.");
+		}
+
+		viewA = MapViewOfFile3(hMapFile, GetCurrentProcess(), base_ptr, 0, size, MEM_REPLACE_PLACEHOLDER, PAGE_READWRITE, nullptr, 0);
+
+		if (!viewA)
+		{
+			CloseHandle(hMapFile);
+			throw std::runtime_error("Fallo al mapear la Región Espejo A.");
+		}
+
+		viewB = MapViewOfFile3(hMapFile, GetCurrentProcess(), base_ptr + size, 0, size, MEM_REPLACE_PLACEHOLDER, PAGE_READWRITE, nullptr, 0);
+
+		if (!viewB)
+		{
+			UnmapViewOfFile2(GetCurrentProcess(), viewA, 0);
+			CloseHandle(hMapFile);
+			throw std::runtime_error("Fallo al mapear la Región Espejo B.");
+		}
+	}
+
+	void MagicRingBuffer::free_portal() noexcept
+	{
+		if (viewB) UnmapViewOfFile2(GetCurrentProcess(), viewB, 0);
+		if (viewA) UnmapViewOfFile2(GetCurrentProcess(), viewA, 0);
+		if (hMapFile) CloseHandle(hMapFile);
+	}
+
 }

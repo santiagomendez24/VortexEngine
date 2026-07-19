@@ -7,6 +7,26 @@
 
 namespace Core
 {
+    LogQueue::LogQueue(size_t ram_usage, Telemetry::Telemetry& telemetry, const OverflowProfile& over) noexcept : telemetry_(telemetry), overflow(over),
+        slab_pool(std::make_unique<Network::SlabPool<10, 10>>())
+    {
+        GetMaxRamUsage(ram_usage);
+        size_t raw_slots = MaxCapacity / sizeof(LogEntry);
+
+        if (raw_slots < 2)
+        {
+            std::cerr << "[ERROR] Memoria RAM insuficiente para inicializar el buffer.\n";
+            return;
+        }
+
+        size_t optimized_capacity = std::bit_ceil(raw_slots);
+        CapacityMask = optimized_capacity - 1;
+        log_array = std::make_unique<LogEntry[]>(optimized_capacity);
+
+        HighWatermark.store((optimized_capacity * 8) / 10, std::memory_order_relaxed);
+        LowWatermark.store((optimized_capacity * 2) / 10, std::memory_order_relaxed);
+    }
+
     void LogQueue::push(LogEntry&& log_line)
     {
         if (!log_array) return;
@@ -44,6 +64,7 @@ namespace Core
         log_array[current_head] = log_line;
 
         head.store(next_head, std::memory_order_release);
+        head.notify_one();
 
         telemetry_.RegisterPushed();
 

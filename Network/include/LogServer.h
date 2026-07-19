@@ -20,26 +20,11 @@ namespace Network
 {
     struct CheckLogEntry
     {
-        [[nodiscard]] static bool validate(const Core::LogEntry& log) noexcept
-        {
-            if (!validateTimestamp(log.timestamp))
-            {
-                return false;
-            }
-
-            if (!validateID(log.log_id))
-            {
-                return false;
-            }
-
-            return true;
-        }
-
         static bool validateTimestamp(uint64_t timestamp) noexcept
         {
             uint64_t CurrentTime = ::Network::Tools::Time::GetTime();
 
-            constexpr uint64_t MinAllowedTime = 1780000000; // 01/06/2026 
+            uint64_t MinAllowedTime = CurrentTime - 5;
             constexpr uint64_t MaxAllowedTime = 5; // Tolerate 5 seconds into the future
 
             if (timestamp < MinAllowedTime || timestamp >(CurrentTime + MaxAllowedTime))
@@ -58,14 +43,14 @@ namespace Network
             }
             return true;
         }
-    
-        static bool validate_fromcharts(const std::errc ec)
+
+        static bool validate_level(const size_t level)
         {
-            if (ec == std::errc::invalid_argument || ec == std::errc::result_out_of_range)
+            if (level > static_cast<size_t>(Core::LogLevel::Critical) || level < static_cast<size_t>(Core::LogLevel::Debug))
             {
                 return false;
             }
-
+            
             return true;
         }
     };
@@ -110,175 +95,20 @@ namespace Network
         }
     };
 
-    class MagicRingBuffer
-    {
-    private:         
-
-        HANDLE hMapFile;
-        void* viewA;
-        void* viewB;
-
-        uint8_t* base_ptr;    // Puntero base virtual contiguo de tamaño size * 2
-        size_t size;
-        size_t head;          // Índice de escritura (acumulativo)
-        size_t tail;
-        
-    public:
-
-        explicit MagicRingBuffer(size_t physical_size)
-            : size(physical_size), base_ptr(nullptr), hMapFile(NULL),
-            viewA(nullptr), viewB(nullptr), head(0), tail(0)
-        {
-            if (size == 0 || (size % (64 * 1024)) != 0)
-            {
-                throw std::invalid_argument("El tamaño del buffer debe ser múltiplo de 64 KB.");
-            }
-
-            start_portal();
-        }
-
-        ~MagicRingBuffer()
-        {
-            free_portal();
-        }
-
-        MagicRingBuffer(const MagicRingBuffer&) = delete;
-        MagicRingBuffer& operator=(const MagicRingBuffer&) = delete;
-
-        MagicRingBuffer(MagicRingBuffer&& other) noexcept
-            : size(other.size), base_ptr(other.base_ptr), hMapFile(other.hMapFile),
-            viewA(other.viewA), viewB(other.viewB), head(other.head), tail(other.tail)
-        {
-            other.base_ptr = nullptr;
-            other.hMapFile = NULL;
-            other.viewA = nullptr;
-            other.viewB = nullptr;
-            other.head = 0;
-            other.tail = 0;
-        }
-
-        // API de control de bytes
-        uint8_t* get_write_ptr() const noexcept
-        {
-            return base_ptr + (head & (size - 1));
-        }
-
-        size_t get_write_space() const noexcept
-        {
-            return size - (head - tail);
-        }
-
-        size_t get_bytes_available() const noexcept
-        {
-            return head - tail;
-        }
-
-        void commit_write(size_t bytes_written) noexcept
-        {
-            head += bytes_written;
-        }
-
-        void consume(size_t bytes_consumed) noexcept
-        {
-            tail += bytes_consumed;
-        }
-
-        std::string_view get_view(size_t len) const noexcept
-        {
-            return std::string_view(reinterpret_cast<const char*>(base_ptr + (tail & (size - 1))), len);
-        }
-
-        void reset() noexcept
-        {
-            head = 0;
-            tail = 0;
-        }
-
-        uint32_t peek(uint32_t usize = 0) noexcept
-        {
-            return *reinterpret_cast<const uint32_t*>(base_ptr + ((tail + usize) & (this->size - 1)));
-        }
-
-    private:
-        void start_portal()
-        {
-            base_ptr = reinterpret_cast<uint8_t*>(VirtualAlloc2(GetCurrentProcess(), nullptr, size * 2, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS, nullptr, 0));
-
-            if (!base_ptr)
-            {
-                throw std::runtime_error("No se pudo reservar el direccionamiento virtual contiguo.");
-            }
-
-            if (!VirtualFreeEx(GetCurrentProcess(), base_ptr, size, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER))
-            {
-                VirtualFreeEx(GetCurrentProcess(), base_ptr, 0, MEM_RELEASE);
-                throw std::runtime_error("Fallo crítico: No se pudo subdividir la región de memoria virtual.");
-            }
-
-            hMapFile = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, static_cast<DWORD>(size), nullptr);
-
-            if (!hMapFile)
-            {
-                throw std::runtime_error("Fallo al crear File Mapping de la sección física.");
-            }
-
-            viewA = MapViewOfFile3(hMapFile, GetCurrentProcess(), base_ptr, 0, size, MEM_REPLACE_PLACEHOLDER, PAGE_READWRITE, nullptr, 0);
-
-            if (!viewA)
-            {
-                CloseHandle(hMapFile);
-                throw std::runtime_error("Fallo al mapear la Región Espejo A.");
-            }
-
-            viewB = MapViewOfFile3(hMapFile, GetCurrentProcess(), base_ptr + size, 0, size, MEM_REPLACE_PLACEHOLDER, PAGE_READWRITE, nullptr, 0);
-
-            if (!viewB)
-            {
-                UnmapViewOfFile2(GetCurrentProcess(), viewA, 0);
-                CloseHandle(hMapFile);
-                throw std::runtime_error("Fallo al mapear la Región Espejo B.");
-            }
-        }
-
-        void free_portal() noexcept
-        {
-            if (viewB) UnmapViewOfFile2(GetCurrentProcess(), viewB, 0);
-            if (viewA) UnmapViewOfFile2(GetCurrentProcess(), viewA, 0);
-            if (hMapFile) CloseHandle(hMapFile);
-        }
-    };
-
     class NetworkSession : public std::enable_shared_from_this<NetworkSession>
     {
     private:
 
         asio::ip::tcp::socket socket_;
 
-        std::unique_ptr<MagicRingBuffer> stash_buffer;
+        std::unique_ptr<class MagicRingBuffer> stash_buffer;
         size_t max_log_size;
 
         Core::LogQueue* assigned_ptr;
         std::atomic<size_t> next_queue_index{ 0 };
         std::atomic<bool> is_closing{ false };
 
-        void disconnect(const std::string& reason)
-        {
-            bool esperado = false;
-            if (!is_closing.compare_exchange_strong(esperado, true))
-            {
-                return;
-            }
-
-            std::cerr << "[VORTEX] Disconnecting session: " << reason << std::endl;
-
-            asio::post(socket_.get_executor(), [self = shared_from_this()]()
-            {
-                asio::error_code ec;
-                self->socket_.cancel(ec);
-                self->socket_.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
-                self->socket_.close(ec);
-            });
-        }
+        void disconnect(const std::string& reason);
 
     public:
 
@@ -309,15 +139,7 @@ namespace Network
             return parse_and_push;
         }
 
-        inline static uint32_t count_trailing_zeros(uint32_t mask)
-        {
-            unsigned long index;
-            if (_BitScanForward(&index, mask))
-            {
-                return static_cast<uint32_t>(index);
-            }
-            return 0;
-        }
+        inline static uint32_t count_trailing_zeros(uint32_t mask);
 
         ParserFunc CurrentParser;
     };
@@ -350,27 +172,55 @@ namespace Network
 
         void start(const std::vector<Core::LogQueue*>& ptr);
 
-        void stop() noexcept
-        {
-            asio::error_code ec;
-            acceptor_.close(ec);
-            work_guard_.reset();
-            io_context_.stop();
-
-            for (auto& guard : work_guard_vec)
-            {
-                guard.reset();
-            }
-
-            for (auto& th : network_pool)
-            {
-                if (th.joinable())
-                {
-                    th.join();
-                }
-            }
-        }
+        void stop() noexcept;
 
         void start_accept();
+    };
+
+    class MagicRingBuffer
+    {
+    private:
+
+        HANDLE hMapFile;
+        void* viewA;
+        void* viewB;
+
+        uint8_t* base_ptr;    // Puntero base virtual contiguo de tamaño size * 2
+        size_t size;
+        size_t head;          // Índice de escritura (acumulativo)
+        size_t tail;
+
+    public:
+
+        explicit MagicRingBuffer(size_t physical_size);
+
+        ~MagicRingBuffer() noexcept { free_portal(); }
+
+        MagicRingBuffer(const MagicRingBuffer&) = delete;
+        MagicRingBuffer& operator=(const MagicRingBuffer&) = delete;
+
+        MagicRingBuffer(MagicRingBuffer&& other) noexcept;
+
+        uint8_t* get_write_ptr() const noexcept;
+
+        size_t get_write_space() const noexcept;
+
+        size_t get_bytes_available() const noexcept;
+
+        void commit_write(size_t bytes_written) noexcept;
+
+        void consume(size_t bytes_consumed) noexcept;
+
+        std::string_view get_view(size_t len) const noexcept;
+
+        void reset() noexcept;
+
+        uint32_t peek(uint32_t usize = 0) noexcept;
+
+    private:
+
+        void start_portal();
+
+        void free_portal() noexcept;
     };
 }

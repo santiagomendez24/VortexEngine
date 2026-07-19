@@ -36,7 +36,7 @@ namespace Core
         Block,
         DropAll,
         DropNonCritical,
-        Spillover
+        PassCriticalDropElse
     };
 
 #pragma pack(push, 1)
@@ -62,7 +62,6 @@ namespace Core
     private:
 
         alignas(64) std::unique_ptr<LogEntry[]> log_array;
-        alignas(64) std::atomic<size_t> head{ 0 };
         alignas(64) std::atomic<size_t> tail{ 0 };
 
         std::atomic<bool> is_running = true;
@@ -71,8 +70,6 @@ namespace Core
 
         std::atomic<size_t> HighWatermark;
         std::atomic<size_t> LowWatermark;
-
-        std::atomic<size_t> waiting_threads{ 0 };
 
         size_t CapacityMask;
 
@@ -85,27 +82,12 @@ namespace Core
 
     public:
 
+        alignas(64) std::atomic<size_t> head{ 0 };
+
         std::unique_ptr<Network::SlabPool<10, 10>> slab_pool;
 
-        explicit LogQueue(size_t ram_usage, Telemetry::Telemetry& telemetry, const OverflowProfile& over) noexcept : telemetry_(telemetry), overflow(over), 
-            slab_pool(std::make_unique<Network::SlabPool<10, 10>>())
-        { 
-            GetMaxRamUsage(ram_usage);
-            size_t raw_slots = MaxCapacity / sizeof(LogEntry);
+        explicit LogQueue(size_t ram_usage, Telemetry::Telemetry& telemetry, const OverflowProfile& over) noexcept;
 
-            if (raw_slots < 2)
-            {
-                std::cerr << "[ERROR] Memoria RAM insuficiente para inicializar el buffer.\n";
-                return;
-            }
-
-            size_t optimized_capacity = std::bit_ceil(raw_slots);
-            CapacityMask = optimized_capacity - 1;
-            log_array = std::make_unique<LogEntry[]>(optimized_capacity);
-
-            HighWatermark.store((optimized_capacity * 8) / 10, std::memory_order_relaxed);
-            LowWatermark.store((optimized_capacity * 2) / 10, std::memory_order_relaxed);
-        }
         ~LogQueue() noexcept = default;
 
         explicit LogQueue(const LogQueue&) noexcept = delete;
