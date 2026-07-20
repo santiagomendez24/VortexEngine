@@ -186,36 +186,28 @@ namespace Network
 		const char* end = ptr + raw_data.size();
 
 		uint64_t time = 0;
-		while (ptr < end && *ptr >= '0' && *ptr <= '9')
-		{
-			time = time * 10 + (*ptr++ - '0');
-		}
-
-		if (ptr >= end || *ptr++ != ' ') return session->disconnect("Malformed Time");
+		auto [ptr1, ec1] = std::from_chars(ptr, end, time);
+		if (ec1 != std::errc{} || ptr1 == end || *ptr1 != ' ') return session->disconnect("Malformed or Invalid Time");
 		if (!CheckLogEntry::validateTimestamp(time)) return session->disconnect("Invalid Time");
 
-		size_t level = 0;
-		while (ptr < end && *ptr >= '0' && *ptr <= '9')
-		{
-			level = level * 10 + (*ptr++ - '0');
-		}
+		ptr = ptr1 + 1;
 
-		if (ptr >= end || *ptr++ != ' ') return session->disconnect("Malformed Level");
-		if (!CheckLogEntry::validate_level(level)) return session->disconnect("Invalid level");
+		size_t level = 0;
+		auto [ptr2, ec2] = std::from_chars(ptr, end, level);
+		if (ec2 != std::errc{} || ptr2 == end || *ptr2 != ' ') return session->disconnect("Malformed or Invalid Level");
+		if (!CheckLogEntry::validate_level(level)) return session->disconnect("Invalid Level");
+
+		ptr = ptr2 + 1;
 
 		uint32_t id = 0;
-		while (ptr < end && *ptr >= '0' && *ptr <= '9')
-		{
-			id = id * 10 + (*ptr++ - '0');
-		}
-
-		if (ptr >= end || *ptr++ != ' ') return session->disconnect("Malformed ID");
+		auto [ptr3, ec3] = std::from_chars(ptr, end, id);
+		if (ec3 != std::errc{} || ptr3 == end || *ptr3 != ' ') return session->disconnect("Malformed or Invalid ID");
 		if (!CheckLogEntry::validateID(id)) return session->disconnect("Invalid ID");
 
+		ptr = ptr3 + 1;
 		std::string_view message(ptr, end - ptr);
 
 		Core::LogQueue* assigned_ptr = session->get_private_queue();
-
 		uint32_t slab_offset;
 		auto* slab = assigned_ptr->slab_pool->get_next_slab(message, slab_offset);
 		if (!slab) return;
@@ -238,17 +230,7 @@ namespace Network
 		const char* data = raw_data.data();
 		const char* end = data + raw_data.size();
 
-		auto fast_parse = [](const char*& ptr, const char* end_ptr) noexcept -> uint64_t
-		{
-			uint64_t val = 0;
-			while (ptr < end_ptr && *ptr >= '0' && *ptr <= '9')
-			{
-				val = (val * 10) + (*ptr++ - '0');
-			}
-			return val;
-		};
-
-		if (raw_data.size() < 32 || ((reinterpret_cast<uintptr_t>(data) & 0xFFF) + 32 > 4096))
+		if (raw_data.size() < 64 || ((reinterpret_cast<uintptr_t>(data) & 0xFFF) + 64 > 4096))
 		{
 			return parse_and_push(raw_data, session);
 		}
@@ -256,7 +238,7 @@ namespace Network
 		__m256i header = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(data));
 		uint32_t mask = _mm256_movemask_epi8(_mm256_cmpeq_epi8(header, _mm256_set1_epi8(' ')));
 
-		if (__builtin_popcount(mask) < 3)
+		if (__popcnt(mask) < 3)
 		{
 			return parse_and_push(raw_data, session);
 		}
@@ -265,24 +247,25 @@ namespace Network
 		uint32_t p2 = _tzcnt_u32(mask & (mask - 1));
 		uint32_t p3 = _tzcnt_u32(mask & (mask - 1) & (mask - 2));
 
-		const char* ptr = data;
-
-		uint64_t time = fast_parse(ptr, data + p1);
-		ptr = data + p1 + 1;
+		uint64_t time = 0;
+		auto [ptr1, ec1] = std::from_chars(data, data + p1, time);
+		if (ec1 != std::errc{}) return session->disconnect("Invalid Time Format");
 		if (!CheckLogEntry::validateTimestamp(time)) return session->disconnect("Invalid Time");
 
-		size_t level = fast_parse(ptr, data + p2);
-		ptr = data + p2 + 1;
+		size_t level = 0;
+		auto [ptr2, ec2] = std::from_chars(data + p1 + 1, data + p2, level);
+		if (ec2 != std::errc{}) return session->disconnect("Invalid Level Format");
 		if (!CheckLogEntry::validate_level(level)) return session->disconnect("Invalid Level");
 
-		uint32_t id = static_cast<uint32_t>(fast_parse(ptr, data + p3));
-		ptr = data + p3 + 1;
+		uint32_t id = 0;
+		auto [ptr3, ec3] = std::from_chars(data + p2 + 1, data + p3, id);
+		if (ec3 != std::errc{}) return session->disconnect("Invalid ID Format");
 		if (!CheckLogEntry::validateID(id)) return session->disconnect("Invalid ID");
 
-		std::string_view message(ptr, end - ptr);
+		const char* msg_start = data + p3 + 1;
+		std::string_view message(msg_start, end - msg_start);
 
 		Core::LogQueue* assigned_ptr = session->get_private_queue();
-
 		uint32_t slab_offset;
 		auto* slab = assigned_ptr->slab_pool->get_next_slab(message, slab_offset);
 		if (!slab) return;

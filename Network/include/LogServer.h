@@ -25,7 +25,7 @@ namespace Network
             uint64_t CurrentTime = ::Network::Tools::Time::GetTime();
 
             uint64_t MinAllowedTime = CurrentTime - 5;
-            constexpr uint64_t MaxAllowedTime = 5; // Tolerate 5 seconds into the future
+            constexpr uint64_t MaxAllowedTime = 5;
 
             if (timestamp < MinAllowedTime || timestamp >(CurrentTime + MaxAllowedTime))
             {
@@ -37,7 +37,7 @@ namespace Network
 
         static bool validateID(uint32_t id) noexcept
         {
-            if (id < 1 || id > 250)
+            if (id < 1 || id > 4294967295U)
             {
                 return false;
             }
