@@ -1,5 +1,6 @@
 #include "../include/LogQueue.h"
 #include "../../Network/include/LogServer.h"
+#include "../../VortexEngine/MainConfig.h"
 #include <utility>
 #include <memory>
 #include <immintrin.h>
@@ -7,10 +8,10 @@
 
 namespace Core
 {
-    LogQueue::LogQueue(size_t ram_usage, Telemetry::Telemetry& telemetry, const OverflowProfile& over) noexcept : telemetry_(telemetry), overflow(over),
-        slab_pool(std::make_unique<Network::SlabPool<10, 10>>())
+    LogQueue::LogQueue(const MainConfig mainconfig, Telemetry::Telemetry& telemetry) noexcept : telemetry_(telemetry), overflow(mainconfig.profile),
+        slab_pool(std::make_unique<Network::SlabPool>(mainconfig.max_slabs, mainconfig.slabs_size))
     {
-        GetMaxRamUsage(ram_usage);
+        GetMaxRamUsage(mainconfig.usable_ram);
         size_t raw_slots = MaxCapacity / sizeof(LogEntry);
 
         if (raw_slots < 2)

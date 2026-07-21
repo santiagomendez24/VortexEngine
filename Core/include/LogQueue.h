@@ -13,9 +13,11 @@
 #include <array>
 #include "../../Telemetry/include/Telemetry.h"
 
+struct MainConfig;
+
 namespace Network
 {
-    template<size_t max_slabs, size_t slab_size> class SlabPool;
+    class SlabPool;
 }
 
 namespace Core
@@ -84,9 +86,9 @@ namespace Core
 
         alignas(64) std::atomic<size_t> head{ 0 };
 
-        std::unique_ptr<Network::SlabPool<10, 10>> slab_pool;
+        std::unique_ptr<Network::SlabPool> slab_pool;
 
-        explicit LogQueue(size_t ram_usage, Telemetry::Telemetry& telemetry, const OverflowProfile& over) noexcept;
+        explicit LogQueue(const MainConfig mainconfig, Telemetry::Telemetry& telemetry) noexcept;
 
         ~LogQueue() noexcept = default;
 
@@ -95,6 +97,7 @@ namespace Core
 
         void push(LogEntry&& log_line);
         bool pop(LogEntry& out_log);
+
         void set_finished() noexcept;
         inline bool func_is_running() noexcept { return is_running.load(std::memory_order_relaxed); }
     };

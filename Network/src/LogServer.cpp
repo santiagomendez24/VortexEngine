@@ -5,9 +5,11 @@
 
 namespace Network
 {
-	LogServer::LogServer(const uint16_t port) noexcept 
+	LogServer::LogServer(const uint16_t port, size_t max_size) noexcept 
 		: acceptor_(asio::ip::tcp::acceptor(io_context_, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), port))), work_guard_(asio::make_work_guard(io_context_)), accept_strand_(asio::make_strand(io_context_))
 	{
+		this->log_size = max_size;
+
 		for (size_t i = 0; i < 2; ++i)
 		{
 			auto ctx = std::make_unique<asio::io_context>();
@@ -71,7 +73,7 @@ namespace Network
 			if (!ec)
 			{
 				Core::LogQueue* assigned_ptr = ptr_queue[worker_index];
-				std::shared_ptr<NetworkSession> session = std::make_shared<NetworkSession>(std::move(*worker_socket), 10, assigned_ptr);
+				std::shared_ptr<NetworkSession> session = std::make_shared<NetworkSession>(std::move(*worker_socket), log_size, assigned_ptr);
 				session->start();
 			}
 			else
@@ -187,6 +189,7 @@ namespace Network
 
 		uint64_t time = 0;
 		auto [ptr1, ec1] = std::from_chars(ptr, end, time);
+
 		if (ec1 != std::errc{} || ptr1 == end || *ptr1 != ' ') return session->disconnect("Malformed or Invalid Time");
 		if (!CheckLogEntry::validateTimestamp(time)) return session->disconnect("Invalid Time");
 
@@ -194,6 +197,7 @@ namespace Network
 
 		size_t level = 0;
 		auto [ptr2, ec2] = std::from_chars(ptr, end, level);
+
 		if (ec2 != std::errc{} || ptr2 == end || *ptr2 != ' ') return session->disconnect("Malformed or Invalid Level");
 		if (!CheckLogEntry::validate_level(level)) return session->disconnect("Invalid Level");
 
@@ -201,6 +205,7 @@ namespace Network
 
 		uint32_t id = 0;
 		auto [ptr3, ec3] = std::from_chars(ptr, end, id);
+
 		if (ec3 != std::errc{} || ptr3 == end || *ptr3 != ' ') return session->disconnect("Malformed or Invalid ID");
 		if (!CheckLogEntry::validateID(id)) return session->disconnect("Invalid ID");
 
@@ -208,18 +213,24 @@ namespace Network
 		std::string_view message(ptr, end - ptr);
 
 		Core::LogQueue* assigned_ptr = session->get_private_queue();
-		uint32_t slab_offset;
-		auto* slab = assigned_ptr->slab_pool->get_next_slab(message, slab_offset);
-		if (!slab) return;
+		uint32_t slab_offset = 0;
+		Slab* out_slab = nullptr;
 
-		std::memcpy(slab->data.data() + slab_offset, message.data(), message.size());
+		char* destination = assigned_ptr->slab_pool->get_next_slab(message, slab_offset, out_slab);
+		if (!destination)
+		{
+			session->disconnect("Message to big for slab");
+			return;
+		}
+
+		std::memcpy(destination + slab_offset, message.data(), message.size());
 
 		Core::LogEntry log_entry;
 		log_entry.level = static_cast<Core::LogLevel>(level);
 		log_entry.log_id = id;
 		log_entry.message_offset = slab_offset;
 		log_entry.timestamp = time;
-		log_entry.slab_ptr = reinterpret_cast<uintptr_t>(slab);
+		log_entry.slab_ptr = reinterpret_cast<uintptr_t>(out_slab);
 		log_entry.message_lenght = static_cast<uint32_t>(message.size());
 
 		assigned_ptr->push(std::move(log_entry));
@@ -249,16 +260,19 @@ namespace Network
 
 		uint64_t time = 0;
 		auto [ptr1, ec1] = std::from_chars(data, data + p1, time);
+
 		if (ec1 != std::errc{}) return session->disconnect("Invalid Time Format");
 		if (!CheckLogEntry::validateTimestamp(time)) return session->disconnect("Invalid Time");
 
 		size_t level = 0;
 		auto [ptr2, ec2] = std::from_chars(data + p1 + 1, data + p2, level);
+
 		if (ec2 != std::errc{}) return session->disconnect("Invalid Level Format");
 		if (!CheckLogEntry::validate_level(level)) return session->disconnect("Invalid Level");
 
 		uint32_t id = 0;
 		auto [ptr3, ec3] = std::from_chars(data + p2 + 1, data + p3, id);
+
 		if (ec3 != std::errc{}) return session->disconnect("Invalid ID Format");
 		if (!CheckLogEntry::validateID(id)) return session->disconnect("Invalid ID");
 
@@ -266,18 +280,24 @@ namespace Network
 		std::string_view message(msg_start, end - msg_start);
 
 		Core::LogQueue* assigned_ptr = session->get_private_queue();
-		uint32_t slab_offset;
-		auto* slab = assigned_ptr->slab_pool->get_next_slab(message, slab_offset);
-		if (!slab) return;
+		uint32_t slab_offset = 0;
+		Slab* out_slab = nullptr;
 
-		std::memcpy(slab->data.data() + slab_offset, message.data(), message.size());
+		char* destination = assigned_ptr->slab_pool->get_next_slab(message, slab_offset, out_slab);
+		if (!destination) 
+		{
+			session->disconnect("Message to big for slab");
+			return;
+		}
+
+		std::memcpy(destination + slab_offset, message.data(), message.size());
 
 		Core::LogEntry log_entry;
 		log_entry.level = static_cast<Core::LogLevel>(level);
 		log_entry.log_id = id;
 		log_entry.message_offset = slab_offset;
 		log_entry.timestamp = time;
-		log_entry.slab_ptr = reinterpret_cast<uintptr_t>(slab);
+		log_entry.slab_ptr = reinterpret_cast<uintptr_t>(out_slab);
 		log_entry.message_lenght = static_cast<uint32_t>(message.size());
 
 		assigned_ptr->push(std::move(log_entry));

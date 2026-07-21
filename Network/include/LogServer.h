@@ -56,32 +56,40 @@ namespace Network
     };
 
 #pragma pack(push, 1)
-    template<size_t slab_size>
     struct Slab
     {
-        std::array<char, slab_size * 1024 * 1024> data;
-        uint8_t tail_byte;
+        std::unique_ptr<char[]> data;
+        uint8_t tail_byte = 0;
     };
 #pragma pack(pop)
 
-    template<size_t max_slabs, size_t slab_size>
     class SlabPool
     {
     private:
 
-        std::array<Slab<slab_size>, max_slabs> slab_pool;
+        std::unique_ptr<Slab[]> slab_pool;
         size_t write_index = 0;
         size_t current_offset = 0;
+        size_t slab_size = 0;
+        size_t max_slabs = 0;
 
     public:
 
-        Slab<slab_size>* get_next_slab(std::string_view message, uint32_t& out_offset)
+        SlabPool(size_t max, size_t size) : slab_size(size * 1024 * 1024), max_slabs(max), slab_pool(std::make_unique<Slab[]>(max)) 
+        {  
+            for (size_t i = 0; i < max; ++i)
+            {
+                slab_pool[i].data = std::make_unique<char[]>(size * 1024 * 1024);
+                slab_pool[i].tail_byte = 0;
+            }
+        }
+
+        char* get_next_slab(std::string_view message, uint32_t& out_offset, Slab*& out_slab)
         {
-            size_t msg_size = message.size();
+            if (message.size() > slab_size) return nullptr;
 
-            if (msg_size > (slab_size * 1024 * 1024)) return nullptr;
-
-            if (current_offset + msg_size > (slab_size * 1024 * 1024))
+            // Verificar si el mensaje cabe en el espacio restante del slab actual
+            if (current_offset + message.size() > slab_size)
             {
                 write_index = (write_index + 1) & (max_slabs - 1);
                 current_offset = 0;
@@ -89,9 +97,10 @@ namespace Network
             }
 
             out_offset = static_cast<uint32_t>(current_offset);
-            current_offset += msg_size;
+            out_slab = &slab_pool[write_index];
 
-            return &slab_pool[write_index];
+            current_offset += message.size();
+            return out_slab->data.get() + out_offset;
         }
     };
 
@@ -150,21 +159,25 @@ namespace Network
 
         std::vector<std::thread> network_pool;
         std::vector<Core::LogQueue*> ptr_queue;
+
         std::atomic<size_t> next_queue_index{ 0 };
         std::atomic<size_t> next_context{ 0 };
         std::atomic<size_t> next_worker_index{ 0 };
 
         asio::io_context io_context_;
         std::vector<std::unique_ptr<asio::io_context>> context_vec;
-        asio::ip::tcp::acceptor acceptor_;
 
+        asio::ip::tcp::acceptor acceptor_;
         asio::executor_work_guard<asio::io_context::executor_type> work_guard_;
+
         std::vector<asio::executor_work_guard<asio::io_context::executor_type>> work_guard_vec;
         asio::strand<asio::io_context::executor_type> accept_strand_;
 
+        size_t log_size = 0;
+
     public:
 
-        explicit LogServer(const uint16_t port) noexcept;
+        explicit LogServer(const uint16_t port, size_t max_size) noexcept;
         ~LogServer() noexcept {}
 
         LogServer(const LogServer&) = delete;
