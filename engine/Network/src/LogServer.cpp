@@ -224,6 +224,7 @@ namespace Network
 		}
 
 		std::memcpy(destination + slab_offset, message.data(), message.size());
+		uintptr_t message_adress = reinterpreted_cast<uintptr_t>(destination + slab_offset);
 
 		Core::LogEntry log_entry;
 		log_entry.level = static_cast<Core::LogLevel>(level);

@@ -50,7 +50,7 @@ namespace Core
         uint32_t message_offset;
         LogLevel level;
 
-        uintptr_t slab_ptr;
+        uint64_t relative_offset;
 
         [[nodiscard]] size_t GetMemory() const noexcept
         {
