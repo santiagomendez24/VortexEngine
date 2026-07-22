@@ -8,7 +8,8 @@
 
 namespace ThreadManager
 {
-	ThreadManager::ThreadManager(MainConfig mainconfig, std::shared_ptr<Telemetry::Telemetry> telemetry, std::shared_ptr<Network::LogServer> LogServer) noexcept : config(mainconfig.thread_config)
+	ThreadManager::ThreadManager(MainConfig mainconfig, std::shared_ptr<Telemetry::Telemetry> telemetry, std::shared_ptr<Network::LogServer> LogServer) noexcept : 
+		config(mainconfig.thread_config)
 	{
 		size_t calc = CalculateThreads(config);
 		if (calc == 0)
@@ -79,7 +80,7 @@ namespace ThreadManager
 
 		for (size_t i = 0; i < net_num; ++i)
 		{
-			owned_queues.push_back(std::make_unique<Core::LogQueue>(mainconfig, *local_telemetry));
+			owned_queues.push_back(std::make_unique<Core::LogQueue>(mainconfig, *local_telemetry, static_cast<uint32_t>(i)));
 			all_queues.push_back(owned_queues.back().get());
 		}
 
@@ -104,7 +105,7 @@ namespace ThreadManager
 		for (size_t i = 0; i < consum_num; ++i)
 		{
 			Core::LogQueue* queue = all_queues[i];
-			consumer_pool.emplace_back([queue]()
+			consumer_pool.emplace_back([this, queue]()
 			{
 				Core::LogEntry out_entry;
 				bool KeepRunning = true;
@@ -114,7 +115,7 @@ namespace ThreadManager
 				{
 					if (queue->pop(out_entry))
 					{
-						//Salir
+						SendToPy(out_entry, queue->slab_pool.get());
 					}
 					else
 					{
@@ -151,7 +152,7 @@ namespace ThreadManager
 
 				while (queue->pop(out_entry))
 				{
-					//Salir
+					SendToPy(out_entry, queue->slab_pool.get());
 				}
 			});
 		}
@@ -192,5 +193,15 @@ namespace ThreadManager
 		{
 			telemetry_thread.join();
 		}
+	}
+
+	void ThreadManager::SendToPy(Core::LogEntry& out_entry, Network::SlabPool* slab_pool) noexcept
+	{
+		auto* shm_base = static_cast<char*>(slab_pool->shared_memory_base_ptr);
+		if (!shm_base) return;
+
+		auto* header = reinterpret_cast<SharedMemoryControl*>(shm_base);
+
+		header->write_offset.fetch_add(out_entry.message_lenght, std::memory_order_release);
 	}
 }

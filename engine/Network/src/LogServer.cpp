@@ -214,24 +214,22 @@ namespace Network
 
 		Core::LogQueue* assigned_ptr = session->get_private_queue();
 		uint32_t slab_offset = 0;
-		Slab* out_slab = nullptr;
 
-		char* destination = assigned_ptr->slab_pool->get_next_slab(message, slab_offset, out_slab);
+		char* destination = assigned_ptr->slab_pool->get_next_slab(message, slab_offset);
 		if (!destination)
 		{
 			session->disconnect("Message to big for slab");
 			return;
 		}
 
-		std::memcpy(destination + slab_offset, message.data(), message.size());
-		uintptr_t message_adress = reinterpreted_cast<uintptr_t>(destination + slab_offset);
+		std::memcpy(destination, message.data(), message.size());
 
 		Core::LogEntry log_entry;
 		log_entry.level = static_cast<Core::LogLevel>(level);
 		log_entry.log_id = id;
 		log_entry.message_offset = slab_offset;
 		log_entry.timestamp = time;
-		log_entry.slab_ptr = reinterpret_cast<uintptr_t>(out_slab);
+		log_entry.relative_offset = slab_offset;
 		log_entry.message_lenght = static_cast<uint32_t>(message.size());
 
 		assigned_ptr->push(std::move(log_entry));
@@ -281,25 +279,28 @@ namespace Network
 		std::string_view message(msg_start, end - msg_start);
 
 		Core::LogQueue* assigned_ptr = session->get_private_queue();
-		uint32_t slab_offset = 0;
-		Slab* out_slab = nullptr;
+		uint32_t relative_offset = 0;
 
-		char* destination = assigned_ptr->slab_pool->get_next_slab(message, slab_offset, out_slab);
-		if (!destination) 
+		char* destination = assigned_ptr->slab_pool->get_next_slab(message, relative_offset);
+		if (!destination)
 		{
-			session->disconnect("Message to big for slab");
+			session->disconnect("Message too big for slab");
 			return;
 		}
 
-		std::memcpy(destination + slab_offset, message.data(), message.size());
+		SharedLogEntryHeader* entry_header = reinterpret_cast<SharedLogEntryHeader*>(destination);
+		entry_header->timestamp = time;
+		entry_header->log_id = id;
+		entry_header->message_len = static_cast<uint32_t>(message.size());
+		entry_header->message_offset = relative_offset + sizeof(SharedLogEntryHeader);
+		entry_header->level = static_cast<uint8_t>(level);
+		entry_header->relative_offset = relative_offset + sizeof(SharedLogEntryHeader);
+
+		std::memcpy(destination + sizeof(SharedLogEntryHeader), message.data(), message.size());
 
 		Core::LogEntry log_entry;
-		log_entry.level = static_cast<Core::LogLevel>(level);
-		log_entry.log_id = id;
-		log_entry.message_offset = slab_offset;
-		log_entry.timestamp = time;
-		log_entry.slab_ptr = reinterpret_cast<uintptr_t>(out_slab);
-		log_entry.message_lenght = static_cast<uint32_t>(message.size());
+		log_entry.relative_offset = relative_offset;
+		log_entry.message_lenght = static_cast<uint32_t>(sizeof(SharedLogEntryHeader) + message.size());
 
 		assigned_ptr->push(std::move(log_entry));
 	}

@@ -48,9 +48,8 @@ namespace Core
         uint32_t log_id;
         uint32_t message_lenght;
         uint32_t message_offset;
-        LogLevel level;
-
         uint64_t relative_offset;
+        LogLevel level;
 
         [[nodiscard]] size_t GetMemory() const noexcept
         {
@@ -88,7 +87,7 @@ namespace Core
 
         std::unique_ptr<Network::SlabPool> slab_pool;
 
-        explicit LogQueue(const MainConfig mainconfig, Telemetry::Telemetry& telemetry) noexcept;
+        explicit LogQueue(const MainConfig mainconfig, Telemetry::Telemetry& telemetry, uint32_t index) noexcept;
 
         ~LogQueue() noexcept = default;
 

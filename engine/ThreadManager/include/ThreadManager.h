@@ -51,5 +51,9 @@ namespace ThreadManager
 		void start_threads(const LogClasses& log_classes, MainConfig mainconfig) noexcept;
 
 		void stop_threads(LogClasses log_classes) noexcept;
+
+	private:
+
+		void SendToPy(Core::LogEntry& out_entry, Network::SlabPool* slab_pool) noexcept;
 	};
 }

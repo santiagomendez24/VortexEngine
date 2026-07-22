@@ -9,6 +9,7 @@
 #include "../Network/time/include/Time.h"
 #include "../ThreadManager/include/ThreadManager.h"
 #include "../Telemetry/include/Telemetry.h"
+#include "../../shared/shared_memory_protocol.h"
 #include "MainConfig.h"
 
 #include "../Core/src/LogQueue.cpp"
@@ -21,6 +22,7 @@
 int main()
 {
 	MainConfig main_config;
+
 	std::shared_ptr<Telemetry::Telemetry> telemetry = std::make_shared<Telemetry::Telemetry>();
 	std::shared_ptr<Network::LogServer> LogServer = std::make_shared<Network::LogServer>(8080, main_config.log_size);
 

@@ -3,5 +3,5 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
-  <Project Path="VortexEngine/VortexEngine.vcxproj" Id="10329796-1701-404a-b36a-f4a2e96137d1" />
+  <Project Path="engine/VortexEngine/VortexEngine.vcxproj" Id="10329796-1701-404a-b36a-f4a2e96137d1" />
 </Solution>

@@ -13,8 +13,11 @@
 #include <winsock2.h>
 #include <Windows.h>
 #include "../time/include/Time.h"
+#include "../../../shared/shared_memory_protocol.h"
 
 #pragma comment(lib, "onecore.lib")
+
+struct SharedMemoryControl;
 
 namespace Network
 {
@@ -27,7 +30,7 @@ namespace Network
             uint64_t MinAllowedTime = CurrentTime - 5;
             constexpr uint64_t MaxAllowedTime = 5;
 
-            if (timestamp < MinAllowedTime || timestamp >(CurrentTime + MaxAllowedTime))
+            if (timestamp < MinAllowedTime || timestamp > (CurrentTime + MaxAllowedTime))
             {
                 return false;
             }
@@ -55,52 +58,88 @@ namespace Network
         }
     };
 
-#pragma pack(push, 1)
-    struct Slab
-    {
-        std::unique_ptr<char[]> data;
-        uint8_t tail_byte = 0;
-    };
-#pragma pack(pop)
-
     class SlabPool
     {
     private:
 
-        std::unique_ptr<Slab[]> slab_pool;
         size_t write_index = 0;
         size_t current_offset = 0;
         size_t slab_size = 0;
         size_t max_slabs = 0;
 
+        HANDLE hMapFile = nullptr;
+
     public:
 
-        SlabPool(size_t max, size_t size) : slab_size(size * 1024 * 1024), max_slabs(max), slab_pool(std::make_unique<Slab[]>(max)) 
-        {  
-            for (size_t i = 0; i < max; ++i)
+        void* shared_memory_base_ptr = nullptr;
+
+        SlabPool(size_t max, size_t size) : slab_size(size * 1024 * 1024), max_slabs(max) {}
+
+        ~SlabPool() noexcept
+        {
+            if (shared_memory_base_ptr)
             {
-                slab_pool[i].data = std::make_unique<char[]>(size * 1024 * 1024);
-                slab_pool[i].tail_byte = 0;
+                UnmapViewOfFile(shared_memory_base_ptr);
+                shared_memory_base_ptr = nullptr;
+            }
+
+            if (hMapFile)
+            {
+                CloseHandle(hMapFile);
+                hMapFile = nullptr;
             }
         }
 
-        char* get_next_slab(std::string_view message, uint32_t& out_offset, Slab*& out_slab)
+        char* get_next_slab(std::string_view message, uint32_t& out_offset)
         {
-            if (message.size() > slab_size) return nullptr;
+            size_t total_needed = sizeof(SharedLogEntryHeader) + message.size();
+            if (total_needed > slab_size) return nullptr;
 
-            // Verificar si el mensaje cabe en el espacio restante del slab actual
-            if (current_offset + message.size() > slab_size)
+            if (current_offset + total_needed > slab_size)
             {
                 write_index = (write_index + 1) & (max_slabs - 1);
                 current_offset = 0;
-                slab_pool[write_index].tail_byte = 0x00;
             }
 
-            out_offset = static_cast<uint32_t>(current_offset);
-            out_slab = &slab_pool[write_index];
+            size_t relative_bytes = (write_index * slab_size) + current_offset;
+            out_offset = static_cast<uint32_t>(relative_bytes);
 
-            current_offset += message.size();
-            return out_slab->data.get() + out_offset;
+            current_offset += total_needed;
+
+            char* data_region_start = static_cast<char*>(shared_memory_base_ptr) + sizeof(SharedMemoryControl);
+            return data_region_start + relative_bytes;
+        }
+
+        bool InitializeSharedMemory(uint32_t channel_id)
+        {
+            size_t total_bytes = sizeof(SharedMemoryControl) + (slab_size * max_slabs);
+
+            wchar_t name_buffer[64];
+            swprintf_s(name_buffer, 64, L"Local\\Vortex_Channel_%u", channel_id);
+
+            DWORD high_size = static_cast<DWORD>(total_bytes >> 32);
+            DWORD low_size = static_cast<DWORD>(total_bytes & 0xFFFFFFFF);
+
+            hMapFile = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, high_size, low_size, name_buffer);
+            if (!hMapFile || hMapFile == INVALID_HANDLE_VALUE) return false;
+
+            shared_memory_base_ptr = MapViewOfFile(hMapFile, FILE_MAP_ALL_ACCESS, 0, 0, total_bytes);
+            if (!shared_memory_base_ptr)
+            {
+                CloseHandle(hMapFile);
+                hMapFile = nullptr;
+                return false;
+            }
+
+            auto* header = static_cast<SharedMemoryControl*>(shared_memory_base_ptr);
+            header->magic_number = 0x564F5254; // 'VORT'
+            header->slab_size = static_cast<uint32_t>(slab_size);
+            header->max_slabs = static_cast<uint32_t>(max_slabs);
+            header->header_size = sizeof(SharedMemoryControl);
+            header->write_offset.store(0, std::memory_order_relaxed);
+            header->read_offset.store(0, std::memory_order_relaxed);
+
+            return true;
         }
     };
 

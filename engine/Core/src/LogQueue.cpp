@@ -8,9 +8,14 @@
 
 namespace Core
 {
-    LogQueue::LogQueue(const MainConfig mainconfig, Telemetry::Telemetry& telemetry) noexcept : telemetry_(telemetry), overflow(mainconfig.profile),
+    LogQueue::LogQueue(const MainConfig mainconfig, Telemetry::Telemetry& telemetry, uint32_t index) noexcept : telemetry_(telemetry), overflow(mainconfig.profile),
         slab_pool(std::make_unique<Network::SlabPool>(mainconfig.max_slabs, mainconfig.slabs_size))
     {
+        if (!slab_pool->InitializeSharedMemory(index))
+        {
+            return;
+        }
+
         GetMaxRamUsage(mainconfig.usable_ram);
         size_t raw_slots = MaxCapacity / sizeof(LogEntry);
 
