@@ -8,21 +8,14 @@
 
 namespace ThreadManager
 {
-	ThreadManager::ThreadManager(MainConfig mainconfig, std::shared_ptr<Telemetry::Telemetry> telemetry, std::shared_ptr<Network::LogServer> LogServer) noexcept : 
-		config(mainconfig.thread_config)
+	ThreadManager::ThreadManager(MainConfig mainconfig, std::shared_ptr<Telemetry::Telemetry> telemetry, std::shared_ptr<Network::LogServer> LogServer) noexcept
 	{
-		size_t calc = CalculateThreads(config);
-		if (calc == 0)
+		size_t thread = mainconfig.thread_num;
+		if (thread == 0)
 		{
 			std::cerr << "[VORTEX ENGINE - WARN] Configuracion de hilos invalida ("
-				<< config.threads_num << "). Minimo un hilo, usando un hilo." << std::endl;
-			config.threads_num = 4;
-			config.network_num = 1;
-			config.consumer_num = 1;
-		}
-		else
-		{
-			config.threads_num = calc;
+				<< mainconfig.thread_num << "). Minimo un hilo, usando un hilo." << std::endl;
+			mainconfig.thread_num = 1;
 		}
 
 		if (mainconfig.usable_ram < 16)
@@ -42,22 +35,6 @@ namespace ThreadManager
 		start_threads(log_classes, mainconfig);
 	}
 
-	size_t ThreadManager::CalculateThreads(ThreadConfig config) noexcept
-	{
-		const size_t total_thread = std::thread::hardware_concurrency();
-
-		size_t net = config.network_num;
-		size_t pop = config.consumer_num;
-		size_t sum = net + pop;
-
-		if (sum >= total_thread - 2 || sum <= 0 || config.threads_num <= 0 || config.threads_num >= total_thread - 2)
-		{
-			return 0;
-		}
-
-		return config.threads_num;
-	}
-
 	void ThreadManager::start_threads(const LogClasses& log_classes, MainConfig mainconfig) noexcept
 	{
 		Network::Tools::Time::update_time();
@@ -68,17 +45,9 @@ namespace ThreadManager
 
 		is_on.store(true, std::memory_order_relaxed);
 
-		size_t thread_n = config.threads_num;
-		size_t net_num = 0;
-		size_t consum_num = 0;
+		size_t thread_n = mainconfig.thread_num;
 
-		net_num = config.network_num;
-		consum_num = config.consumer_num;
-
-		if (net_num == 0) net_num = 1;
-		if (consum_num == 0) consum_num = 1;
-
-		for (size_t i = 0; i < net_num; ++i)
+		for (size_t i = 0; i < thread_n; ++i)
 		{
 			owned_queues.push_back(std::make_unique<Core::LogQueue>(mainconfig, *local_telemetry, static_cast<uint32_t>(i)));
 			all_queues.push_back(owned_queues.back().get());
@@ -102,10 +71,10 @@ namespace ThreadManager
 			}
 		});
 
-		for (size_t i = 0; i < consum_num; ++i)
+		for (size_t i = 0; i < thread_n; ++i)
 		{
 			Core::LogQueue* queue = all_queues[i];
-			consumer_pool.emplace_back([this, queue]()
+			thread_pool.emplace_back([this, queue]()
 			{
 				Core::LogEntry out_entry;
 				bool KeepRunning = true;
@@ -174,7 +143,7 @@ namespace ThreadManager
 
 		is_on.store(false, std::memory_order_relaxed);
 
-		for (auto& thread : consumer_pool)
+		for (auto& thread : thread_pool)
 		{
 			if (thread.joinable())
 			{

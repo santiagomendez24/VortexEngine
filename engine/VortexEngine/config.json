@@ -1,0 +1,7 @@
+{
+  "usable_ram": 128,
+  "log_size": 1,
+  "profile": 1,
+  "thread_num": 1,
+  "max_slabs": 10
+}

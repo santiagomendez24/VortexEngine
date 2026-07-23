@@ -78,7 +78,7 @@ namespace Network
 			}
 			else
 			{
-				std::print("Error al aceptar conexion: {}\n", ec.message());
+				std::print("Error accepting connection: {}\n", ec.message());
 			}
 
 			start_accept();
@@ -105,7 +105,7 @@ namespace Network
 
 			if (space < 1024)
 			{
-				disconnect("El paquete se pasa de tamaño");
+				disconnect("The package exceeds the size limit.");
 				return;
 			}
 		}
@@ -142,7 +142,7 @@ namespace Network
 
 				if (log_len == 0 || log_len > max_log_size)
 				{
-					disconnect("El paquete se pasa del tamaño establecido");
+					disconnect("The package exceeds the established size.");
 					return;
 				}
 
@@ -213,24 +213,29 @@ namespace Network
 		std::string_view message(ptr, end - ptr);
 
 		Core::LogQueue* assigned_ptr = session->get_private_queue();
-		uint32_t slab_offset = 0;
+		uint32_t relative_offset = 0;
 
-		char* destination = assigned_ptr->slab_pool->get_next_slab(message, slab_offset);
+		char* destination = assigned_ptr->slab_pool->get_next_slab(message, relative_offset);
 		if (!destination)
 		{
-			session->disconnect("Message to big for slab");
+			session->disconnect("Message too big for slab");
 			return;
 		}
 
-		std::memcpy(destination, message.data(), message.size());
+		SharedLogEntryHeader* entry_header = reinterpret_cast<SharedLogEntryHeader*>(destination);
+		entry_header->timestamp = time;
+		entry_header->log_id = id;
+		entry_header->message_len = static_cast<uint32_t>(message.size());
+		entry_header->message_offset = relative_offset + sizeof(SharedLogEntryHeader);
+		entry_header->level = static_cast<uint8_t>(level);
+		entry_header->relative_offset = relative_offset + sizeof(SharedLogEntryHeader);
+
+		std::memcpy(destination + sizeof(SharedLogEntryHeader), message.data(), message.size());
 
 		Core::LogEntry log_entry;
+		log_entry.relative_offset = relative_offset;
+		log_entry.message_lenght = static_cast<uint32_t>(sizeof(SharedLogEntryHeader) + message.size());
 		log_entry.level = static_cast<Core::LogLevel>(level);
-		log_entry.log_id = id;
-		log_entry.message_offset = slab_offset;
-		log_entry.timestamp = time;
-		log_entry.relative_offset = slab_offset;
-		log_entry.message_lenght = static_cast<uint32_t>(message.size());
 
 		assigned_ptr->push(std::move(log_entry));
 	}
@@ -301,6 +306,7 @@ namespace Network
 		Core::LogEntry log_entry;
 		log_entry.relative_offset = relative_offset;
 		log_entry.message_lenght = static_cast<uint32_t>(sizeof(SharedLogEntryHeader) + message.size());
+		log_entry.level = static_cast<Core::LogLevel>(level);
 
 		assigned_ptr->push(std::move(log_entry));
 	}
@@ -357,7 +363,7 @@ namespace Network
 	{
 		if (size == 0 || (size % (64 * 1024)) != 0)
 		{
-			throw std::invalid_argument("El tamaño del buffer debe ser múltiplo de 64 KB.");
+			throw std::invalid_argument("The buffer size must be a multiple of 64 KB.");
 		}
 
 		start_portal();
@@ -421,20 +427,20 @@ namespace Network
 
 		if (!base_ptr)
 		{
-			throw std::runtime_error("No se pudo reservar el direccionamiento virtual contiguo.");
+			throw std::runtime_error("Could not reserve contiguous virtual addressing.");
 		}
 
 		if (!VirtualFreeEx(GetCurrentProcess(), base_ptr, size, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER))
 		{
 			VirtualFreeEx(GetCurrentProcess(), base_ptr, 0, MEM_RELEASE);
-			throw std::runtime_error("Fallo crítico: No se pudo subdividir la región de memoria virtual.");
+			throw std::runtime_error("Critical failure: Could not subdivide the virtual memory region.");
 		}
 
 		hMapFile = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, static_cast<DWORD>(size), nullptr);
 
 		if (!hMapFile)
 		{
-			throw std::runtime_error("Fallo al crear File Mapping de la sección física.");
+			throw std::runtime_error("Failed to create file mapping for the physical section.");
 		}
 
 		viewA = MapViewOfFile3(hMapFile, GetCurrentProcess(), base_ptr, 0, size, MEM_REPLACE_PLACEHOLDER, PAGE_READWRITE, nullptr, 0);
@@ -442,7 +448,7 @@ namespace Network
 		if (!viewA)
 		{
 			CloseHandle(hMapFile);
-			throw std::runtime_error("Fallo al mapear la Región Espejo A.");
+			throw std::runtime_error("Failed to map Mirror Region A.");
 		}
 
 		viewB = MapViewOfFile3(hMapFile, GetCurrentProcess(), base_ptr + size, 0, size, MEM_REPLACE_PLACEHOLDER, PAGE_READWRITE, nullptr, 0);
@@ -451,7 +457,7 @@ namespace Network
 		{
 			UnmapViewOfFile2(GetCurrentProcess(), viewA, 0);
 			CloseHandle(hMapFile);
-			throw std::runtime_error("Fallo al mapear la Región Espejo B.");
+			throw std::runtime_error("Failed to map Mirror Region B.");
 		}
 	}
 

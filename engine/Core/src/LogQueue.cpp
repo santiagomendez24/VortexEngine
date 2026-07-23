@@ -21,7 +21,7 @@ namespace Core
 
         if (raw_slots < 2)
         {
-            std::cerr << "[ERROR] Memoria RAM insuficiente para inicializar el buffer.\n";
+            std::print(stderr, "[ERROR] Insufficient memory ram to initialize the buffer.\n");
             return;
         }
 
@@ -61,6 +61,9 @@ namespace Core
                     {
                         _mm_pause();
                     }
+                    break;
+                case OverflowProfile::PassCriticalDropElse:
+                    if (log_line.level != LogLevel::Critical) return;
                     break;
             }
         }
