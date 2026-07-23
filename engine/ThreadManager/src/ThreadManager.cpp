@@ -84,7 +84,8 @@ namespace ThreadManager
 				{
 					if (queue->pop(out_entry))
 					{
-						SendToPy(out_entry, queue->slab_pool.get());
+						// Logs arrive here, processed at high speed.
+						// They exit to wherever you want; for now, they are dropped in memory.
 					}
 					else
 					{
@@ -121,7 +122,8 @@ namespace ThreadManager
 
 				while (queue->pop(out_entry))
 				{
-					SendToPy(out_entry, queue->slab_pool.get());
+					// Logs arrive here, processed at high speed.
+					// They exit to wherever you want; for now, they are dropped in memory.
 				}
 			});
 		}
@@ -162,15 +164,5 @@ namespace ThreadManager
 		{
 			telemetry_thread.join();
 		}
-	}
-
-	void ThreadManager::SendToPy(Core::LogEntry& out_entry, Network::SlabPool* slab_pool) noexcept
-	{
-		auto* shm_base = static_cast<char*>(slab_pool->shared_memory_base_ptr);
-		if (!shm_base) return;
-
-		auto* header = reinterpret_cast<SharedMemoryControl*>(shm_base);
-
-		header->write_offset.fetch_add(out_entry.message_lenght, std::memory_order_release);
 	}
 }
