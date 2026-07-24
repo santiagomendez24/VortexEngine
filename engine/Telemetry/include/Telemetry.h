@@ -1,4 +1,8 @@
 #pragma once
+
+#ifndef TELEMETRY_H
+#define TELEMETRY_H
+
 #include <memory>
 #include <atomic>
 #include <thread>
@@ -23,3 +27,5 @@ namespace Telemetry
 		void GetVelocity(uint64_t pushed, uint64_t popped) noexcept;
 	};
 }
+
+#endif

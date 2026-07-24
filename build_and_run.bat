@@ -38,7 +38,7 @@ if errorlevel 1 (
 echo.
 echo ----------------------------------------------------------------------------
 echo [SUCCESS] Engine compiled successfully.
-echo [3/3] Launching VortexEngine and Python Analytics Reader...
+echo [3/3] Launching VortexEngine...
 echo ----------------------------------------------------------------------------
 echo.
 
@@ -47,8 +47,8 @@ del *.obj >nul 2>nul
 :: Navigate into the engine directory so relative paths (like config.json) resolve natively
 cd engine\VortexEngine
 
-:: Run C++ Engine and pipe to Python (referencing relative path to analytics)
-VortexEngine.exe | py -3.14t -u ..\..\analytics\reader_engine.py
+:: Run C++ Engine natively standalone
+VortexEngine.exe
 
 echo.
 echo ============================================================================

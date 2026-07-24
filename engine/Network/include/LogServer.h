@@ -1,5 +1,8 @@
 #pragma once
 
+#ifndef LOGSERVER_H
+#define LOGSERVER_H
+
 #include <asio.hpp>
 #include <memory>
 #include <vector>
@@ -276,3 +279,5 @@ namespace Network
         void free_portal() noexcept;
     };
 }
+
+#endif

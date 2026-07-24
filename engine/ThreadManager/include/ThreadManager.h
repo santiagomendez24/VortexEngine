@@ -1,5 +1,8 @@
 #pragma once
 
+#ifndef THREADMANAGER_H
+#define THREADMANAGER_H
+
 #include <atomic>
 #include <vector>
 #include <optional>
@@ -45,3 +48,5 @@ namespace ThreadManager
 		void SendToPy(Core::LogEntry& out_entry, Network::SlabPool* slab_pool) noexcept;
 	};
 }
+
+#endif

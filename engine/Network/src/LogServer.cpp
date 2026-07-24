@@ -236,6 +236,9 @@ namespace Network
 		log_entry.relative_offset = relative_offset;
 		log_entry.message_lenght = static_cast<uint32_t>(sizeof(SharedLogEntryHeader) + message.size());
 		log_entry.level = static_cast<Core::LogLevel>(level);
+		log_entry.log_id = id;
+		log_entry.timestamp = time;
+		log_entry.message_offset = relative_offset + sizeof(SharedLogEntryHeader);
 
 		assigned_ptr->push(std::move(log_entry));
 	}
@@ -307,6 +310,9 @@ namespace Network
 		log_entry.relative_offset = relative_offset;
 		log_entry.message_lenght = static_cast<uint32_t>(sizeof(SharedLogEntryHeader) + message.size());
 		log_entry.level = static_cast<Core::LogLevel>(level);
+		log_entry.log_id = id;
+		log_entry.timestamp = time;
+		log_entry.message_offset = relative_offset + sizeof(SharedLogEntryHeader);
 
 		assigned_ptr->push(std::move(log_entry));
 	}
