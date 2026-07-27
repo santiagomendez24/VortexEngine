@@ -78,6 +78,17 @@ namespace Network
 
         SlabPool(size_t max, size_t size) : slab_size(size * 1024 * 1024), max_slabs(max) {}
 
+        SlabPool(const SlabPool&) = delete;
+        SlabPool& operator=(const SlabPool&) = delete;
+
+        SlabPool(SlabPool&& other) noexcept : write_index(other.write_index), current_offset(other.current_offset),
+            slab_size(other.slab_size), max_slabs(other.max_slabs),
+            hMapFile(other.hMapFile), shared_memory_base_ptr(other.shared_memory_base_ptr)
+        {
+            other.hMapFile = nullptr;
+            other.shared_memory_base_ptr = nullptr;
+        }
+
         ~SlabPool() noexcept
         {
             if (shared_memory_base_ptr)
